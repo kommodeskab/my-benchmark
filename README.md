@@ -96,19 +96,22 @@ Classifies a single categorical label for the entire audio clip.
 
 - **Metadata Key**: `'label'` (or custom via `label_key`).
 - **How it works**:
-  - For `'knn'` and `'mlp'`: sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
+  - For `'linear'`, `'knn'`, and `'mlp'`: sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
   - For `'transformer'`: **no pooling** is applied; a non-causal Transformer encoder attends across all temporal frames directly.
 - **Parameters**:
-  - `classifier` (`str | BaseClassifier`, default `"knn"`): `'knn'`, `'mlp'`, or `'transformer'`.
+  - `classifier` (`str | BaseClassifier`, default `"knn"`): `'linear'`, `'knn'`, `'mlp'`, or `'transformer'`.
   - `label_key` (`str`, default `"label"`): Key in sample metadata containing the ground truth label.
-  - `pooling` (`str`, default `"mean"`): Temporal pooling method for `'knn'` and `'mlp'` (`"mean"`, `"max"`, `"first"`, `"last"`). Bypassed when using `'transformer'`.
+  - `pooling` (`str`, default `"mean"`): Temporal pooling method for `'linear'`, `'knn'`, and `'mlp'` (`"mean"`, `"max"`, `"first"`, `"last"`). Bypassed when using `'transformer'`.
   - `test_size` (`float`, default `0.2`): Fraction of dataset reserved for testing.
   - `split_key` (`str | None`, default `None`): Optional metadata key specifying pre-defined splits (`"train"` / `"test"`).
-  - `classifier_kwargs` (`dict | None`): Hyperparameters passed to the classifier (e.g., `n_neighbors` for KNN; `epochs`, `lr`, `d_model`, `nhead` for MLP/Transformer).
+  - `classifier_kwargs` (`dict | None`): Hyperparameters passed to the classifier (e.g., `C` for linear logistic; `n_neighbors` for KNN; `epochs`, `lr`, `d_model`, `nhead` for MLP/Transformer).
   - `metric` (`str`, default `"accuracy"`): Main metric for the task (`"accuracy"`, `"macro_f1"`, `"micro_f1"`), also populated in `result.metrics["value"]`.
 
 ```python
 from audio_benchmark import GlobalClassificationTask
+
+# Linear classifier (Logistic Regression) with mean pooling
+task_linear = GlobalClassificationTask(classifier="linear", pooling="mean")
 
 # KNN with mean pooling
 task_knn = GlobalClassificationTask(classifier="knn", pooling="mean")
@@ -152,7 +155,7 @@ Classifies a label for each frame across time.
 - **Metadata Key**: `'frame_labels'` (or custom via `label_key`). Must be a sequence of length $T$ matching the raw audio length.
 - **How it works**: When the representation model downsamples audio from $T$ to $T'$, this task downsamples the ground truth labels to $T'$ by taking the most common label (mode) in each window.
 - **Parameters**:
-  - `classifier` (`str | BaseClassifier`, default `"knn"`): `'knn'` or `'mlp'`.
+  - `classifier` (`str | BaseClassifier`, default `"knn"`): `'linear'`, `'knn'`, or `'mlp'`.
   - `label_key` (`str`, default `"frame_labels"`): Metadata key with the per-frame label sequence.
   - `test_size` (`float`, default `0.2`): Train/test split at the audio clip level (avoids temporal leakage).
   - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined splits.

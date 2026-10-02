@@ -1,6 +1,7 @@
 from audio_benchmark.classifiers.models import (
     BaseClassifier,
     KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
     MLPBenchmarkClassifier,
     TransformerBenchmarkClassifier,
     create_classifier,
@@ -9,6 +10,7 @@ from audio_benchmark.classifiers.models import (
 __all__ = [
     "BaseClassifier",
     "KNNBenchmarkClassifier",
+    "LinearBenchmarkClassifier",
     "MLPBenchmarkClassifier",
     "TransformerBenchmarkClassifier",
     "create_classifier",

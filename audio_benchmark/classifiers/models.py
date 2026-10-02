@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from torch import nn
@@ -41,6 +42,61 @@ class BaseClassifier(ABC):
             "macro_f1": macro_f1,
             "micro_f1": micro_f1,
         }
+
+
+class LinearBenchmarkClassifier(BaseClassifier):
+    """Linear downstream classifier (Logistic Regression or Ridge Classifier)."""
+
+    def __init__(
+        self,
+        C: float = 1.0,
+        max_iter: int = 1000,
+        random_state: int | None = 42,
+        model_type: str = "logistic",
+        alpha: float | None = None,
+        **kwargs,
+    ):
+        self.C = C
+        self.max_iter = max_iter
+        self.random_state = random_state
+        self.alpha = alpha
+        self.kwargs = kwargs
+
+        if alpha is not None or str(model_type).lower() in (
+            "ridge",
+            "ridge_classifier",
+        ):
+            self.model_type = "ridge"
+            ridge_alpha = alpha if alpha is not None else 1.0
+            self.model = RidgeClassifier(
+                alpha=ridge_alpha, random_state=random_state, **kwargs
+            )
+        else:
+            self.model_type = "logistic"
+            self.model = LogisticRegression(
+                C=C, max_iter=max_iter, random_state=random_state, **kwargs
+            )
+
+    def fit(
+        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
+    ) -> "LinearBenchmarkClassifier":
+        X_np = to_numpy(X)
+        y_np = to_numpy(y).ravel()
+        self.model.fit(X_np, y_np)
+        return self
+
+    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        X_np = to_numpy(X)
+        return self.model.predict(X_np)
+
+    def predict_proba(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict class probabilities for features X (when supported, e.g. LogisticRegression)."""
+        if hasattr(self.model, "predict_proba"):
+            X_np = to_numpy(X)
+            return self.model.predict_proba(X_np)
+        raise AttributeError(
+            f"{self.model.__class__.__name__} does not support predict_proba."
+        )
 
 
 class KNNBenchmarkClassifier(BaseClassifier):
@@ -326,13 +382,17 @@ def create_classifier(
 ) -> BaseClassifier:
     """Factory to create a downstream classifier by name or return an existing instance.
 
-    Supported types: 'knn', 'mlp', 'transformer'.
+    Supported types: 'linear' (or 'logistic', 'ridge'), 'knn', 'mlp', 'transformer'.
     """
     if isinstance(classifier_type, BaseClassifier):
         return classifier_type
 
-    normalized = classifier_type.lower().strip()
-    if normalized in ("knn", "k_nearest_neighbors"):
+    normalized = str(classifier_type).lower().strip()
+    if normalized in ("linear", "logistic", "logistic_regression", "linear_classifier"):
+        return LinearBenchmarkClassifier(**kwargs)
+    elif normalized in ("ridge", "ridge_classifier"):
+        return LinearBenchmarkClassifier(model_type="ridge", **kwargs)
+    elif normalized in ("knn", "k_nearest_neighbors"):
         return KNNBenchmarkClassifier(**kwargs)
     elif normalized in ("mlp", "multilayer_perceptron"):
         return MLPBenchmarkClassifier(**kwargs)
@@ -340,5 +400,5 @@ def create_classifier(
         return TransformerBenchmarkClassifier(**kwargs)
     else:
         raise ValueError(
-            f"Unsupported classifier type: '{classifier_type}'. Available options: 'knn', 'mlp', 'transformer'."
+            f"Unsupported classifier type: '{classifier_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer'."
         )

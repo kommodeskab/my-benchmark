@@ -5,6 +5,7 @@ import pytest
 
 from audio_benchmark.classifiers import (
     KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
     MLPBenchmarkClassifier,
     TransformerBenchmarkClassifier,
     create_classifier,
@@ -19,6 +20,39 @@ def synthetic_data():
     y = np.array([0] * 10 + [1] * 10)
     X[y == 1] += 2.0
     return X[:14], y[:14], X[14:], y[14:]
+
+
+def test_linear_classifier(synthetic_data):
+    X_train, y_train, X_test, y_test = synthetic_data
+
+    # Default LogisticRegression linear classifier
+    clf = LinearBenchmarkClassifier(C=1.0)
+    clf.fit(X_train, y_train)
+
+    preds = clf.predict(X_test)
+    assert len(preds) == len(X_test)
+
+    proba = clf.predict_proba(X_test)
+    assert proba.shape == (len(X_test), 2)
+    assert np.allclose(proba.sum(axis=1), 1.0)
+
+    metrics = clf.evaluate(X_test, y_test)
+    assert "accuracy" in metrics
+    assert "macro_f1" in metrics
+    assert "micro_f1" in metrics
+    assert 0.0 <= metrics["accuracy"] <= 1.0
+
+    # Ridge classifier mode
+    clf_ridge = LinearBenchmarkClassifier(alpha=1.0)
+    clf_ridge.fit(X_train, y_train)
+    preds_ridge = clf_ridge.predict(X_test)
+    assert len(preds_ridge) == len(X_test)
+    metrics_ridge = clf_ridge.evaluate(X_test, y_test)
+    assert 0.0 <= metrics_ridge["accuracy"] <= 1.0
+
+    # Ridge does not support predict_proba
+    with pytest.raises(AttributeError, match="does not support predict_proba"):
+        clf_ridge.predict_proba(X_test)
 
 
 def test_knn_classifier(synthetic_data):
@@ -88,6 +122,17 @@ def test_transformer_classifier():
 
 
 def test_create_classifier_factory():
+    linear = create_classifier("linear")
+    assert isinstance(linear, LinearBenchmarkClassifier)
+    assert linear.model_type == "logistic"
+
+    logistic = create_classifier("logistic")
+    assert isinstance(logistic, LinearBenchmarkClassifier)
+
+    ridge = create_classifier("ridge")
+    assert isinstance(ridge, LinearBenchmarkClassifier)
+    assert ridge.model_type == "ridge"
+
     knn = create_classifier("knn")
     assert isinstance(knn, KNNBenchmarkClassifier)
 
@@ -96,6 +141,9 @@ def test_create_classifier_factory():
 
     tf = create_classifier("transformer")
     assert isinstance(tf, TransformerBenchmarkClassifier)
+
+    same_linear = create_classifier(linear)
+    assert same_linear is linear
 
     same_knn = create_classifier(knn)
     assert same_knn is knn

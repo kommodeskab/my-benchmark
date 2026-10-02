@@ -23,7 +23,7 @@ class GlobalClassificationTask(BaseTask):
 
     The label is extracted from the metadata dictionary of each sample.
     The sequence representations (N, T', C') are pooled over time to produce
-    clip-level features (N, C'), which are then classified using KNN, MLP, or DNN.
+    clip-level features (N, C'), which are then classified using Linear, KNN, MLP, or Transformer.
     """
 
     def __init__(
@@ -43,7 +43,7 @@ class GlobalClassificationTask(BaseTask):
         Args:
             name: Identifier for the task.
             label_key: Key in the sample metadata dictionary containing the target label.
-            classifier: Downstream classifier model. Can be 'knn', 'mlp', 'dnn',
+            classifier: Downstream classifier model. Can be 'linear', 'knn', 'mlp', 'transformer',
                 or an instance of BaseClassifier.
             pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last',
                 or a callable f(representations) -> pooled_tensor.

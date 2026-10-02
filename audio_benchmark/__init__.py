@@ -5,6 +5,7 @@ from audio_benchmark.cache import RepresentationCache
 from audio_benchmark.classifiers import (
     BaseClassifier,
     KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
     MLPBenchmarkClassifier,
     TransformerBenchmarkClassifier,
     create_classifier,
@@ -68,6 +69,7 @@ __all__ = [
     "InvalidModelOutputError",
     "KNNBenchmarkClassifier",
     "KNNBenchmarkRegressor",
+    "LinearBenchmarkClassifier",
     "LinearBenchmarkRegressor",
     "MLPBenchmarkClassifier",
     "MLPBenchmarkRegressor",

@@ -23,6 +23,9 @@ class MismatchedFrameDataset(Dataset):
 
 
 def test_frame_classification_with_knn_and_mlp():
+    task_linear = FrameClassificationTask(
+        classifier="linear", test_size=0.25, random_state=42
+    )
     task_knn = FrameClassificationTask(
         classifier="knn", test_size=0.25, random_state=42
     )
@@ -49,7 +52,7 @@ def test_frame_classification_with_knn_and_mlp():
     assert info["baseline_metric"] == "accuracy"
     assert 0.0 <= info["baseline_value"] <= 1.0
 
-    for task in (task_knn, task_mlp):
+    for task in (task_linear, task_knn, task_mlp):
         res = task.evaluate(reps, meta)
         assert "train_clips" not in res
         assert "test_clips" not in res

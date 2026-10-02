@@ -43,7 +43,7 @@ class FrameClassificationTask(BaseTask):
         Args:
             name: Identifier for the task.
             label_key: Metadata key containing the per-frame label sequence (length T).
-            classifier: Downstream classifier ('knn' or 'mlp' or BaseClassifier instance).
+            classifier: Downstream classifier ('linear', 'knn', 'mlp', or BaseClassifier instance).
             test_size: Proportion of audio clips for testing.
             random_state: Random seed for train/test split.
             split_key: Optional metadata key ('train'/'test') for pre-defined splits.

@@ -8,6 +8,9 @@ from audio_benchmark.tasks.global_classification import GlobalClassificationTask
 
 
 def test_global_classification_with_different_classifiers():
+    task_linear = GlobalClassificationTask(
+        classifier="linear", test_size=0.25, random_state=42
+    )
     task_knn = GlobalClassificationTask(
         classifier="knn", test_size=0.25, random_state=42
     )
@@ -32,7 +35,7 @@ def test_global_classification_with_different_classifiers():
     assert info["chance_level"] == 0.5
     assert set(info["classes"]) == {"cls_0", "cls_1"}
 
-    for task in (task_knn, task_mlp):
+    for task in (task_linear, task_knn, task_mlp):
         res = task.evaluate(reps, meta)
         # evaluate should only return probe/task name, metrics, and training time
         assert "num_classes" not in res
