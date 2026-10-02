@@ -94,19 +94,21 @@ class LinearBenchmarkClassifier(BaseClassifier):
         self.alpha = alpha
         self.kwargs = kwargs
 
-        if alpha is not None or str(model_type).lower() in (
-            "ridge",
-            "ridge_classifier",
-        ):
+        norm_type = str(model_type).lower().strip()
+        if alpha is not None or norm_type == "ridge":
             self.model_type = "ridge"
             ridge_alpha = alpha if alpha is not None else 1.0
             self.model = RidgeClassifier(
                 alpha=ridge_alpha, random_state=random_state, **kwargs
             )
-        else:
+        elif norm_type == "logistic":
             self.model_type = "logistic"
             self.model = LogisticRegression(
                 C=C, max_iter=max_iter, random_state=random_state, **kwargs
+            )
+        else:
+            raise ValueError(
+                f"Unknown model_type: '{model_type}'. Supported: 'logistic', 'ridge'."
             )
 
     def fit(
@@ -578,7 +580,7 @@ def create_classifier(
 ) -> BaseClassifier:
     """Factory to create a downstream classifier by name or return an existing instance.
 
-    Supported types: 'linear' (or 'logistic', 'ridge'), 'knn', 'mlp', 'transformer', 'bayes_opt'.
+    Supported types: 'linear', 'ridge', 'knn', 'mlp', 'transformer', 'bayes_opt'.
 
     Args:
         classifier_type: Classifier identifier name or an existing BaseClassifier instance.
@@ -591,15 +593,15 @@ def create_classifier(
         return classifier_type
 
     normalized = str(classifier_type).lower().strip()
-    if normalized in ("linear", "logistic", "logistic_regression", "linear_classifier"):
+    if normalized == "linear":
         return LinearBenchmarkClassifier(**kwargs)
-    elif normalized in ("ridge", "ridge_classifier"):
+    elif normalized == "ridge":
         return LinearBenchmarkClassifier(model_type="ridge", **kwargs)
-    elif normalized in ("knn", "k_nearest_neighbors"):
+    elif normalized == "knn":
         return KNNBenchmarkClassifier(**kwargs)
-    elif normalized in ("mlp", "multilayer_perceptron"):
+    elif normalized == "mlp":
         return MLPBenchmarkClassifier(**kwargs)
-    elif normalized in ("transformer", "transformer_encoder"):
+    elif normalized == "transformer":
         return TransformerBenchmarkClassifier(**kwargs)
     elif normalized in ("bayes_opt", "bayesopt", "bayesian_optimization"):
         from audio_benchmark.bayes_opt import BayesOptClassifier
@@ -607,5 +609,5 @@ def create_classifier(
         return BayesOptClassifier(**kwargs)
     else:
         raise ValueError(
-            f"Unsupported classifier type: '{classifier_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer', 'bayes_opt'."
+            f"Unsupported classifier type: '{classifier_type}'. Available options: 'linear', 'ridge', 'knn', 'mlp', 'transformer', 'bayes_opt'."
         )

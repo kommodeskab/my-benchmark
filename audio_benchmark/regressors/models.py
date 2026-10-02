@@ -539,7 +539,7 @@ class TransformerBenchmarkRegressor(BaseRegressor):
 def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegressor:
     """Factory to create a downstream regressor by name or return an existing instance.
 
-    Supported types: 'linear' (or 'ridge'), 'knn', 'mlp', 'transformer', 'bayes_opt'.
+    Supported types: 'linear', 'knn', 'mlp', 'transformer', 'bayes_opt'.
 
     Args:
         regressor_type: Regressor identifier name or an existing BaseRegressor instance.
@@ -552,13 +552,13 @@ def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegre
         return regressor_type
 
     normalized = str(regressor_type).lower().strip()
-    if normalized in ("linear", "ridge", "linear_regression"):
+    if normalized == "linear":
         return LinearBenchmarkRegressor(**kwargs)
-    elif normalized in ("knn", "k_nearest_neighbors"):
+    elif normalized == "knn":
         return KNNBenchmarkRegressor(**kwargs)
-    elif normalized in ("mlp", "multilayer_perceptron"):
+    elif normalized == "mlp":
         return MLPBenchmarkRegressor(**kwargs)
-    elif normalized in ("transformer", "transformer_encoder"):
+    elif normalized == "transformer":
         return TransformerBenchmarkRegressor(**kwargs)
     elif normalized in ("bayes_opt", "bayesopt", "bayesian_optimization"):
         from audio_benchmark.bayes_opt import BayesOptRegressor
