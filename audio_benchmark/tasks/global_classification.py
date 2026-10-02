@@ -80,7 +80,6 @@ class GlobalClassificationTask(BaseTask):
         self,
         representations: torch.Tensor,
         metadata: list[dict[str, Any]],
-        **kwargs,
     ) -> dict[str, Any]:
         """Train downstream classifier on pooled representations and return evaluation metrics.
 

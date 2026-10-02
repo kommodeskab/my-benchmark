@@ -305,3 +305,11 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
     assert result.metrics["best_params"]["alpha"] in [0.1, 1.0, 10.0]
 
     result.print_summary()
+
+
+def test_bayes_opt_disallowed_aliases():
+    for alias in ("bayesopt", "bayesian_optimization", "bayes_optimization"):
+        with pytest.raises(ValueError, match="Unsupported classifier type"):
+            create_classifier(alias)
+        with pytest.raises(ValueError, match="Unsupported regressor type"):
+            create_regressor(alias)

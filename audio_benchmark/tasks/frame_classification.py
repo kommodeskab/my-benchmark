@@ -87,7 +87,6 @@ class FrameClassificationTask(BaseTask):
         self,
         representations: torch.Tensor,
         metadata: list[dict[str, Any]],
-        **kwargs,
     ) -> dict[str, Any]:
         """Downsample frame labels to T' and evaluate downstream classifier.
 

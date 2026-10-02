@@ -76,7 +76,6 @@ class LinearBenchmarkClassifier(BaseClassifier):
         random_state: Seed used by the random number generator.
         model_type: Linear model variant: 'logistic' (default) or 'ridge'.
         alpha: Regularization strength for Ridge. If set, forces model_type='ridge'.
-        **kwargs: Additional keyword arguments passed to the underlying scikit-learn estimator.
     """
 
     def __init__(
@@ -86,25 +85,21 @@ class LinearBenchmarkClassifier(BaseClassifier):
         random_state: int | None = 42,
         model_type: str = "logistic",
         alpha: float | None = None,
-        **kwargs,
     ):
         self.C = C
         self.max_iter = max_iter
         self.random_state = random_state
         self.alpha = alpha
-        self.kwargs = kwargs
 
         norm_type = str(model_type).lower().strip()
         if alpha is not None or norm_type == "ridge":
             self.model_type = "ridge"
             ridge_alpha = alpha if alpha is not None else 1.0
-            self.model = RidgeClassifier(
-                alpha=ridge_alpha, random_state=random_state, **kwargs
-            )
+            self.model = RidgeClassifier(alpha=ridge_alpha, random_state=random_state)
         elif norm_type == "logistic":
             self.model_type = "logistic"
             self.model = LogisticRegression(
-                C=C, max_iter=max_iter, random_state=random_state, **kwargs
+                C=C, max_iter=max_iter, random_state=random_state
             )
         else:
             raise ValueError(
@@ -163,15 +158,20 @@ class KNNBenchmarkClassifier(BaseClassifier):
     Args:
         n_neighbors: Number of nearest neighbors to query.
         metric: Distance metric to use for neighbor search (default: 'minkowski').
-        **kwargs: Additional keyword arguments passed to KNeighborsClassifier.
+        weights: Weight function used in prediction ('uniform' or 'distance').
     """
 
-    def __init__(self, n_neighbors: int = 5, metric: str = "minkowski", **kwargs):
+    def __init__(
+        self,
+        n_neighbors: int = 5,
+        metric: str = "minkowski",
+        weights: str = "uniform",
+    ):
         self.n_neighbors = n_neighbors
         self.metric = metric
-        self.kwargs = kwargs
+        self.weights = weights
         self.model = KNeighborsClassifier(
-            n_neighbors=n_neighbors, metric=metric, **kwargs
+            n_neighbors=n_neighbors, metric=metric, weights=weights
         )
 
     def fit(
@@ -192,7 +192,7 @@ class KNNBenchmarkClassifier(BaseClassifier):
         effective_k = min(self.n_neighbors, len(X_np))
         if effective_k != self.n_neighbors:
             self.model = KNeighborsClassifier(
-                n_neighbors=effective_k, metric=self.metric, **self.kwargs
+                n_neighbors=effective_k, metric=self.metric, weights=self.weights
             )
         self.model.fit(X_np, y_np)
         return self
@@ -603,7 +603,7 @@ def create_classifier(
         return MLPBenchmarkClassifier(**kwargs)
     elif normalized == "transformer":
         return TransformerBenchmarkClassifier(**kwargs)
-    elif normalized in ("bayes_opt", "bayesopt", "bayesian_optimization"):
+    elif normalized == "bayes_opt":
         from audio_benchmark.bayes_opt import BayesOptClassifier
 
         return BayesOptClassifier(**kwargs)

@@ -85,7 +85,6 @@ class FrameRegressionTask(BaseTask):
         self,
         representations: torch.Tensor,
         metadata: list[dict[str, Any]],
-        **kwargs,
     ) -> dict[str, Any]:
         """Downsample frame targets to T' and evaluate downstream regressor.
 

@@ -83,13 +83,13 @@ class LinearBenchmarkRegressor(BaseRegressor):
 
     Args:
         alpha: Regularization strength for Ridge regression (larger values specify stronger regularization).
-        **kwargs: Additional keyword arguments passed to scikit-learn Ridge.
+        random_state: Seed used by the random number generator.
     """
 
-    def __init__(self, alpha: float = 1.0, **kwargs):
+    def __init__(self, alpha: float = 1.0, random_state: int | None = 42):
         self.alpha = alpha
-        self.kwargs = kwargs
-        self.model = Ridge(alpha=alpha, **kwargs)
+        self.random_state = random_state
+        self.model = Ridge(alpha=alpha, random_state=random_state)
 
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
@@ -127,15 +127,20 @@ class KNNBenchmarkRegressor(BaseRegressor):
     Args:
         n_neighbors: Number of nearest neighbors to query.
         metric: Distance metric to use for neighbor search (default: 'cosine').
-        **kwargs: Additional keyword arguments passed to KNeighborsRegressor.
+        weights: Weight function used in prediction ('uniform' or 'distance').
     """
 
-    def __init__(self, n_neighbors: int = 5, metric: str = "cosine", **kwargs):
+    def __init__(
+        self,
+        n_neighbors: int = 5,
+        metric: str = "cosine",
+        weights: str = "uniform",
+    ):
         self.n_neighbors = n_neighbors
         self.metric = metric
-        self.kwargs = kwargs
+        self.weights = weights
         self.model = KNeighborsRegressor(
-            n_neighbors=n_neighbors, metric=metric, **kwargs
+            n_neighbors=n_neighbors, metric=metric, weights=weights
         )
 
     def fit(
@@ -155,7 +160,7 @@ class KNNBenchmarkRegressor(BaseRegressor):
         effective_k = min(self.n_neighbors, len(X_np))
         if effective_k != self.n_neighbors:
             self.model = KNeighborsRegressor(
-                n_neighbors=effective_k, metric=self.metric, **self.kwargs
+                n_neighbors=effective_k, metric=self.metric, weights=self.weights
             )
         self.model.fit(X_np, y_np)
         return self
@@ -560,7 +565,7 @@ def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegre
         return MLPBenchmarkRegressor(**kwargs)
     elif normalized == "transformer":
         return TransformerBenchmarkRegressor(**kwargs)
-    elif normalized in ("bayes_opt", "bayesopt", "bayesian_optimization"):
+    elif normalized == "bayes_opt":
         from audio_benchmark.bayes_opt import BayesOptRegressor
 
         return BayesOptRegressor(**kwargs)

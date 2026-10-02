@@ -114,6 +114,11 @@ def test_create_regressor_factory():
     tf = create_regressor("transformer")
     assert isinstance(tf, TransformerBenchmarkRegressor)
 
+    bayes_opt = create_regressor("bayes_opt")
+    from audio_benchmark.bayes_opt import BayesOptRegressor
+
+    assert isinstance(bayes_opt, BayesOptRegressor)
+
     same_knn = create_regressor(knn)
     assert same_knn is knn
 
@@ -126,6 +131,8 @@ def test_create_regressor_factory():
         "k_nearest_neighbors",
         "multilayer_perceptron",
         "transformer_encoder",
+        "bayesopt",
+        "bayesian_optimization",
     ):
         with pytest.raises(ValueError, match="Unsupported regressor type"):
             create_regressor(alias)

@@ -39,8 +39,12 @@ class SimpleAudioDataset(Dataset):
 
 def test_base_wrapper_caching_and_overwrite():
     class CountingWrapper(BaseMetadataWrapper):
-        def __init__(self, dataset, **kwargs):
-            super().__init__(dataset, key="count", **kwargs)
+        def __init__(
+            self, dataset: Dataset, cache: bool = True, overwrite: bool = False
+        ):
+            super().__init__(
+                dataset=dataset, key="count", cache=cache, overwrite=overwrite
+            )
             self.call_count = 0
 
         def generate(self, waveform, sample_rate, metadata):

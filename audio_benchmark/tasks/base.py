@@ -34,14 +34,12 @@ class BaseTask(ABC):
         self,
         representations: torch.Tensor,
         metadata: list[dict[str, Any]],
-        **kwargs,
     ) -> dict[str, Any]:
         """Evaluate representations on this task.
 
         Args:
             representations: Tensor of shape (N, T', C').
             metadata: List of metadata dicts corresponding to each sample.
-            **kwargs: Additional evaluation arguments.
 
         Returns:
             dict[str, Any]: Dictionary containing evaluation metrics.

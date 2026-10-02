@@ -158,7 +158,6 @@ class SequenceModelingTask(BaseTask):
         self,
         representations: torch.Tensor,
         metadata: list[dict[str, Any]],
-        **kwargs,
     ) -> dict[str, Any]:
         """Train sequence probe on representations and compute TER & Sequence Accuracy.
 

@@ -143,6 +143,11 @@ def test_create_classifier_factory():
     tf = create_classifier("transformer")
     assert isinstance(tf, TransformerBenchmarkClassifier)
 
+    bayes_opt = create_classifier("bayes_opt")
+    from audio_benchmark.bayes_opt import BayesOptClassifier
+
+    assert isinstance(bayes_opt, BayesOptClassifier)
+
     same_linear = create_classifier(linear)
     assert same_linear is linear
 
@@ -160,6 +165,8 @@ def test_create_classifier_factory():
         "k_nearest_neighbors",
         "multilayer_perceptron",
         "transformer_encoder",
+        "bayesopt",
+        "bayesian_optimization",
     ):
         with pytest.raises(ValueError, match="Unsupported classifier type"):
             create_classifier(alias)

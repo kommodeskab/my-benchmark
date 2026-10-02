@@ -36,12 +36,12 @@ def _sample_param(trial: optuna.Trial, name: str, spec: Any) -> Any:
     if isinstance(spec, tuple):
         if len(spec) > 0 and isinstance(spec[0], str):
             kind = spec[0].lower().strip()
-            if kind in ("categorical", "cat", "choice"):
+            if kind == "categorical":
                 return trial.suggest_categorical(name, spec[1])
-            elif kind in ("int", "integer"):
+            elif kind == "int":
                 step = spec[3] if len(spec) > 3 else 1
                 return trial.suggest_int(name, int(spec[1]), int(spec[2]), step=step)
-            elif kind in ("float",):
+            elif kind == "float":
                 log = spec[3] if len(spec) > 3 else False
                 return trial.suggest_float(
                     name, float(spec[1]), float(spec[2]), log=bool(log)
@@ -65,13 +65,13 @@ def _sample_param(trial: optuna.Trial, name: str, spec: Any) -> Any:
 
     if isinstance(spec, dict):
         kind = spec.get("type", "float").lower()
-        if kind in ("categorical", "choice"):
+        if kind == "categorical":
             return trial.suggest_categorical(name, spec["choices"])
-        elif kind in ("int", "integer"):
+        elif kind == "int":
             return trial.suggest_int(
                 name, int(spec["low"]), int(spec["high"]), step=spec.get("step", 1)
             )
-        elif kind in ("float",):
+        elif kind == "float":
             return trial.suggest_float(
                 name,
                 float(spec["low"]),
@@ -85,24 +85,24 @@ def _sample_param(trial: optuna.Trial, name: str, spec: Any) -> Any:
 def get_default_classifier_param_space(model_name: str) -> dict[str, Any]:
     """Retrieve default hyperparameter search space for standard classifiers."""
     norm = str(model_name).lower().strip()
-    if norm in ("linear", "logistic", "logistic_regression", "linear_classifier"):
+    if norm == "linear":
         return {"C": (1e-3, 1e2, "log")}
-    elif norm in ("ridge", "ridge_classifier"):
+    elif norm == "ridge":
         return {"alpha": (1e-3, 1e3, "log")}
-    elif norm in ("knn", "k_nearest_neighbors"):
+    elif norm == "knn":
         return {
             "n_neighbors": (1, 15),
             "metric": ["minkowski", "cosine", "euclidean"],
             "weights": ["uniform", "distance"],
         }
-    elif norm in ("mlp", "multilayer_perceptron"):
+    elif norm == "mlp":
         return {
             "hidden_dim": [32, 64, 128, 256],
             "dropout": (0.0, 0.5),
             "lr": (1e-4, 1e-2, "log"),
             "weight_decay": (1e-6, 1e-2, "log"),
         }
-    elif norm in ("transformer", "transformer_encoder"):
+    elif norm == "transformer":
         return {
             "d_model": [32, 64, 128],
             "nhead": [2, 4],
@@ -118,22 +118,22 @@ def get_default_classifier_param_space(model_name: str) -> dict[str, Any]:
 def get_default_regressor_param_space(model_name: str) -> dict[str, Any]:
     """Retrieve default hyperparameter search space for standard regressors."""
     norm = str(model_name).lower().strip()
-    if norm in ("linear", "ridge", "linear_regression"):
+    if norm == "linear":
         return {"alpha": (1e-3, 1e3, "log")}
-    elif norm in ("knn", "k_nearest_neighbors"):
+    elif norm == "knn":
         return {
             "n_neighbors": (1, 15),
             "metric": ["minkowski", "cosine", "euclidean"],
             "weights": ["uniform", "distance"],
         }
-    elif norm in ("mlp", "multilayer_perceptron"):
+    elif norm == "mlp":
         return {
             "hidden_dim": [32, 64, 128, 256],
             "dropout": (0.0, 0.5),
             "lr": (1e-4, 1e-2, "log"),
             "weight_decay": (1e-6, 1e-2, "log"),
         }
-    elif norm in ("transformer", "transformer_encoder"):
+    elif norm == "transformer":
         return {
             "d_model": [32, 64, 128],
             "nhead": [2, 4],
@@ -177,21 +177,14 @@ class BayesOptClassifier(BaseClassifier):
         random_state: int | None = 42,
         show_progress: bool = True,
         base_kwargs: dict[str, Any] | None = None,
-        **kwargs,
     ):
-        if "classifier" in kwargs:
-            base_model = kwargs.pop("classifier")
-
         self.base_model = base_model
         self.n_trials = n_trials
         self.cv = cv
         self.metric = metric
         self.random_state = random_state
         self.show_progress = show_progress
-
-        merged_base_kwargs = dict(base_kwargs or {})
-        merged_base_kwargs.update(kwargs)
-        self.base_kwargs = merged_base_kwargs
+        self.base_kwargs = dict(base_kwargs or {})
 
         # Determine model name identifier
         if isinstance(base_model, str):
@@ -220,11 +213,7 @@ class BayesOptClassifier(BaseClassifier):
         if self.best_model is not None:
             return getattr(self.best_model, "accepts_sequence", False)
         if isinstance(self.base_model, str):
-            return self.base_model.lower().strip() in (
-                "transformer",
-                "transformer_encoder",
-                "transformer_classifier",
-            )
+            return self.base_model.lower().strip() == "transformer"
         return getattr(self.base_model, "accepts_sequence", False)
 
     def _sample_params(self, trial: optuna.Trial) -> dict[str, Any]:
@@ -236,9 +225,12 @@ class BayesOptClassifier(BaseClassifier):
             for name, spec in self.param_space.items()
         }
 
-    def _create_model(self, **kwargs) -> BaseClassifier:
+    def _create_model(
+        self, model_kwargs: dict[str, Any] | None = None
+    ) -> BaseClassifier:
         """Instantiate an underlying classifier with the given parameters."""
-        if any(name in self.model_name.lower() for name in ("linear", "ridge", "knn")):
+        kwargs = dict(model_kwargs or {})
+        if self.model_name in ("linear", "ridge", "knn"):
             kwargs.pop("show_progress", None)
 
         if isinstance(self.base_model, str):
@@ -300,7 +292,7 @@ class BayesOptClassifier(BaseClassifier):
                     X_va = X_data[val_idx]
                     y_va = y_np[val_idx]
 
-                    model = self._create_model(**merged_kwargs)
+                    model = self._create_model(merged_kwargs)
                     model.fit(X_tr, y_tr)
                     metrics = model.evaluate(X_va, y_va)
                     scores.append(float(metrics.get(self.metric, 0.0)))
@@ -331,7 +323,7 @@ class BayesOptClassifier(BaseClassifier):
         best_model_kwargs = {**self.base_kwargs, **self.best_params}
         if "show_progress" not in best_model_kwargs:
             best_model_kwargs["show_progress"] = self.show_progress
-        self.best_model = self._create_model(**best_model_kwargs)
+        self.best_model = self._create_model(best_model_kwargs)
         self.best_model.fit(X, y)
 
         return self
@@ -392,21 +384,14 @@ class BayesOptRegressor(BaseRegressor):
         random_state: int | None = 42,
         show_progress: bool = True,
         base_kwargs: dict[str, Any] | None = None,
-        **kwargs,
     ):
-        if "regressor" in kwargs:
-            base_model = kwargs.pop("regressor")
-
         self.base_model = base_model
         self.n_trials = n_trials
         self.cv = cv
         self.metric = metric
         self.random_state = random_state
         self.show_progress = show_progress
-
-        merged_base_kwargs = dict(base_kwargs or {})
-        merged_base_kwargs.update(kwargs)
-        self.base_kwargs = merged_base_kwargs
+        self.base_kwargs = dict(base_kwargs or {})
 
         if isinstance(base_model, str):
             self.model_name = base_model.lower().strip()
@@ -433,11 +418,7 @@ class BayesOptRegressor(BaseRegressor):
         if self.best_model is not None:
             return getattr(self.best_model, "accepts_sequence", False)
         if isinstance(self.base_model, str):
-            return self.base_model.lower().strip() in (
-                "transformer",
-                "transformer_encoder",
-                "transformer_regressor",
-            )
+            return self.base_model.lower().strip() == "transformer"
         return getattr(self.base_model, "accepts_sequence", False)
 
     def _sample_params(self, trial: optuna.Trial) -> dict[str, Any]:
@@ -449,9 +430,12 @@ class BayesOptRegressor(BaseRegressor):
             for name, spec in self.param_space.items()
         }
 
-    def _create_model(self, **kwargs) -> BaseRegressor:
+    def _create_model(
+        self, model_kwargs: dict[str, Any] | None = None
+    ) -> BaseRegressor:
         """Instantiate an underlying regressor with the given parameters."""
-        if any(name in self.model_name.lower() for name in ("linear", "ridge", "knn")):
+        kwargs = dict(model_kwargs or {})
+        if self.model_name in ("linear", "knn"):
             kwargs.pop("show_progress", None)
 
         if isinstance(self.base_model, str):
@@ -490,10 +474,7 @@ class BayesOptRegressor(BaseRegressor):
             n_splits=actual_cv, shuffle=True, random_state=self.random_state
         )
 
-        is_minimize = (
-            self.metric in ("mse", "rmse", "mae", "loss")
-            or "error" in self.metric.lower()
-        )
+        is_minimize = self.metric in ("mse", "rmse", "mae")
         direction = "minimize" if is_minimize else "maximize"
 
         def objective(trial: optuna.Trial) -> float:
@@ -510,7 +491,7 @@ class BayesOptRegressor(BaseRegressor):
                     X_va = X_data[val_idx]
                     y_va = y_np[val_idx]
 
-                    model = self._create_model(**merged_kwargs)
+                    model = self._create_model(merged_kwargs)
                     model.fit(X_tr, y_tr)
                     metrics = model.evaluate(X_va, y_va)
                     scores.append(float(metrics.get(self.metric, 0.0)))
@@ -541,7 +522,7 @@ class BayesOptRegressor(BaseRegressor):
         best_model_kwargs = {**self.base_kwargs, **self.best_params}
         if "show_progress" not in best_model_kwargs:
             best_model_kwargs["show_progress"] = self.show_progress
-        self.best_model = self._create_model(**best_model_kwargs)
+        self.best_model = self._create_model(best_model_kwargs)
         self.best_model.fit(X, y)
 
         return self
