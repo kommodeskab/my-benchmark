@@ -54,6 +54,10 @@ def test_linear_classifier(synthetic_data):
     with pytest.raises(AttributeError, match="does not support predict_proba"):
         clf_ridge.predict_proba(X_test)
 
+    # Disallowed alias for model_type
+    with pytest.raises(ValueError, match="Unknown model_type"):
+        LinearBenchmarkClassifier(model_type="ridge_classifier")
+
 
 def test_knn_classifier(synthetic_data):
     X_train, y_train, X_test, y_test = synthetic_data
@@ -126,9 +130,6 @@ def test_create_classifier_factory():
     assert isinstance(linear, LinearBenchmarkClassifier)
     assert linear.model_type == "logistic"
 
-    logistic = create_classifier("logistic")
-    assert isinstance(logistic, LinearBenchmarkClassifier)
-
     ridge = create_classifier("ridge")
     assert isinstance(ridge, LinearBenchmarkClassifier)
     assert ridge.model_type == "ridge"
@@ -150,3 +151,15 @@ def test_create_classifier_factory():
 
     with pytest.raises(ValueError, match="Unsupported classifier type"):
         create_classifier("unsupported_classifier")
+
+    for alias in (
+        "logistic",
+        "logistic_regression",
+        "linear_classifier",
+        "ridge_classifier",
+        "k_nearest_neighbors",
+        "multilayer_perceptron",
+        "transformer_encoder",
+    ):
+        with pytest.raises(ValueError, match="Unsupported classifier type"):
+            create_classifier(alias)

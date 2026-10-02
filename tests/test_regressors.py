@@ -105,9 +105,6 @@ def test_create_regressor_factory():
     linear = create_regressor("linear")
     assert isinstance(linear, LinearBenchmarkRegressor)
 
-    ridge = create_regressor("ridge")
-    assert isinstance(ridge, LinearBenchmarkRegressor)
-
     knn = create_regressor("knn")
     assert isinstance(knn, KNNBenchmarkRegressor)
 
@@ -122,3 +119,13 @@ def test_create_regressor_factory():
 
     with pytest.raises(ValueError, match="Unsupported regressor type"):
         create_regressor("unsupported_regressor")
+
+    for alias in (
+        "ridge",
+        "linear_regression",
+        "k_nearest_neighbors",
+        "multilayer_perceptron",
+        "transformer_encoder",
+    ):
+        with pytest.raises(ValueError, match="Unsupported regressor type"):
+            create_regressor(alias)
