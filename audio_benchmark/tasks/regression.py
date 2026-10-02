@@ -176,6 +176,13 @@ class RegressionTask(BaseTask):
             "train_r2": train_metrics["r2"],
             "training_time": training_time,
         }
+        if hasattr(regressor_inst, "best_params") and regressor_inst.best_params:
+            results["best_params"] = regressor_inst.best_params
+        if (
+            hasattr(regressor_inst, "best_score")
+            and regressor_inst.best_score is not None
+        ):
+            results["best_cv_score"] = regressor_inst.best_score
 
         return results
 

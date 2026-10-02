@@ -166,7 +166,7 @@ class FrameRegressionTask(BaseTask):
         metrics = regressor_inst.evaluate(X_test, y_test)
         train_metrics = regressor_inst.evaluate(X_train, y_train)
 
-        return {
+        results = {
             "task": self.name,
             "regressor": str(regressor_name).lower(),
             "value": float(metrics[self.metric]),
@@ -179,6 +179,15 @@ class FrameRegressionTask(BaseTask):
             "train_r2": train_metrics["r2"],
             "training_time": training_time,
         }
+        if hasattr(regressor_inst, "best_params") and regressor_inst.best_params:
+            results["best_params"] = regressor_inst.best_params
+        if (
+            hasattr(regressor_inst, "best_score")
+            and regressor_inst.best_score is not None
+        ):
+            results["best_cv_score"] = regressor_inst.best_score
+
+        return results
 
     def examine_data(self, dataset: Dataset) -> dict[str, Any]:
         """Examine the dataset in the context of frame regression.

@@ -348,6 +348,50 @@ print(f"Downstream probe training time: {res_clf.metrics['training_time']:.4f}s"
 
 ---
 
+## Bayesian Optimization for Downstream Models
+
+You can optimize downstream classifier and regressor hyperparameters via Bayesian optimization using [`BayesOptClassifier`](file:///home/andbagge/my-benchmark/audio_benchmark/bayes_opt.py) and [`BayesOptRegressor`](file:///home/andbagge/my-benchmark/audio_benchmark/bayes_opt.py).
+
+The wrappers use [Optuna](https://optuna.org/) to run K-fold cross-validation on the training set, select the optimal hyperparameter combination, and evaluate only the best-performing model on the downstream test set. Progress is displayed in real time using `tqdm`.
+
+### Quick Example
+
+```python
+from audio_benchmark import (
+    AudioBenchmark,
+    BayesOptClassifier,
+    BayesOptRegressor,
+    GlobalClassificationTask,
+    RegressionTask,
+)
+
+# Optimize KNN classifier hyperparameters (e.g. n_neighbors, distance metric)
+opt_clf = BayesOptClassifier(base_model="knn", n_trials=15, cv=3)
+task_clf = GlobalClassificationTask(classifier=opt_clf)
+
+result = benchmark.run(
+    model=my_model,
+    model_name="encoder",
+    dataset=my_dataset,
+    task=task_clf,
+)
+
+# Benchmark reports standard metrics for the best model plus best hyperparameters:
+result.print_summary()
+print("Best hyperparameters found:", result.metrics["best_params"])
+print("Best CV score:", result.metrics["best_cv_score"])
+
+# Custom parameter spaces (handling discrete choices, integer ranges, and continuous values):
+custom_space = {
+    "hidden_dim": [64, 128, 256],  # Discrete categorical choices
+    "lr": (1e-4, 1e-2, "log"),  # Continuous log-uniform float
+    "dropout": (0.0, 0.4),  # Continuous uniform float
+}
+opt_mlp = BayesOptClassifier(base_model="mlp", param_space=custom_space, n_trials=10)
+```
+
+---
+
 ## Running Tests
 
 To verify the test suite:

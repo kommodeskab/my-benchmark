@@ -8,9 +8,9 @@ from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from torch import nn
+from tqdm import tqdm
 
-from audio_benchmark.tasks.sequence_models import PositionalEncoding
-from audio_benchmark.utils import resolve_device, to_numpy
+from audio_benchmark.utils import PositionalEncoding, resolve_device, to_numpy
 
 
 class BaseClassifier(ABC):
@@ -263,6 +263,7 @@ class MLPBenchmarkClassifier(BaseClassifier):
         batch_size: int = 32,
         weight_decay: float = 1e-4,
         device: str = "auto",
+        show_progress: bool = True,
     ):
         self.hidden_dim = hidden_dim
         self.dropout = dropout
@@ -271,6 +272,7 @@ class MLPBenchmarkClassifier(BaseClassifier):
         self.batch_size = batch_size
         self.weight_decay = weight_decay
         self.device_str = device
+        self.show_progress = show_progress
         self.model: _TorchMLP | None = None
         self.device = resolve_device(device)
 
@@ -310,7 +312,14 @@ class MLPBenchmarkClassifier(BaseClassifier):
         criterion = nn.CrossEntropyLoss()
 
         self.model.train()
-        for _ in range(self.epochs):
+        epoch_iter = tqdm(
+            range(self.epochs),
+            desc="Training MLPClassifier",
+            disable=not self.show_progress,
+            leave=False,
+        )
+        for _ in epoch_iter:
+            running_loss = 0.0
             for batch_x, batch_y in loader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
                 optimizer.zero_grad()
@@ -318,6 +327,10 @@ class MLPBenchmarkClassifier(BaseClassifier):
                 loss = criterion(logits, batch_y)
                 loss.backward()
                 optimizer.step()
+                running_loss += float(loss.item())
+            epoch_iter.set_postfix(
+                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
+            )
 
         return self
 
@@ -446,6 +459,7 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         batch_size: int = 16,
         weight_decay: float = 1e-4,
         device: str = "auto",
+        show_progress: bool = True,
     ):
         if d_model % nhead != 0:
             raise ValueError(
@@ -467,6 +481,7 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         self.batch_size = batch_size
         self.weight_decay = weight_decay
         self.device_str = device
+        self.show_progress = show_progress
         self.model: _TorchTransformerClassifier | None = None
         self.device = resolve_device(device)
 
@@ -512,7 +527,14 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         criterion = nn.CrossEntropyLoss()
 
         self.model.train()
-        for _ in range(self.epochs):
+        epoch_iter = tqdm(
+            range(self.epochs),
+            desc="Training TransformerClassifier",
+            disable=not self.show_progress,
+            leave=False,
+        )
+        for _ in epoch_iter:
+            running_loss = 0.0
             for batch_x, batch_y in loader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
                 optimizer.zero_grad()
@@ -520,6 +542,10 @@ class TransformerBenchmarkClassifier(BaseClassifier):
                 loss = criterion(logits, batch_y)
                 loss.backward()
                 optimizer.step()
+                running_loss += float(loss.item())
+            epoch_iter.set_postfix(
+                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
+            )
 
         return self
 
@@ -552,7 +578,7 @@ def create_classifier(
 ) -> BaseClassifier:
     """Factory to create a downstream classifier by name or return an existing instance.
 
-    Supported types: 'linear' (or 'logistic', 'ridge'), 'knn', 'mlp', 'transformer'.
+    Supported types: 'linear' (or 'logistic', 'ridge'), 'knn', 'mlp', 'transformer', 'bayes_opt'.
 
     Args:
         classifier_type: Classifier identifier name or an existing BaseClassifier instance.
@@ -575,7 +601,11 @@ def create_classifier(
         return MLPBenchmarkClassifier(**kwargs)
     elif normalized in ("transformer", "transformer_encoder"):
         return TransformerBenchmarkClassifier(**kwargs)
+    elif normalized in ("bayes_opt", "bayesopt", "bayesian_optimization"):
+        from audio_benchmark.bayes_opt import BayesOptClassifier
+
+        return BayesOptClassifier(**kwargs)
     else:
         raise ValueError(
-            f"Unsupported classifier type: '{classifier_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer'."
+            f"Unsupported classifier type: '{classifier_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer', 'bayes_opt'."
         )

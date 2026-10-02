@@ -180,7 +180,7 @@ class FrameClassificationTask(BaseTask):
         metrics = classifier_inst.evaluate(X_test, y_test)
         train_metrics = classifier_inst.evaluate(X_train, y_train)
 
-        return {
+        results = {
             "task": self.name,
             "classifier": str(classifier_name).lower(),
             "value": float(metrics[self.metric]),
@@ -190,6 +190,15 @@ class FrameClassificationTask(BaseTask):
             "train_accuracy": train_metrics["accuracy"],
             "training_time": training_time,
         }
+        if hasattr(classifier_inst, "best_params") and classifier_inst.best_params:
+            results["best_params"] = classifier_inst.best_params
+        if (
+            hasattr(classifier_inst, "best_score")
+            and classifier_inst.best_score is not None
+        ):
+            results["best_cv_score"] = classifier_inst.best_score
+
+        return results
 
     def examine_data(self, dataset: Dataset) -> dict[str, Any]:
         """Examine the dataset in the context of frame classification.

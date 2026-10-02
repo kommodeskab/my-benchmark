@@ -119,6 +119,13 @@ class BenchmarkResult:
             print(f"  Main Metric (value): {self.metrics['value']}")
         if "training_time" in self.metrics:
             print(f"  Training Time:   {self.metrics['training_time']:.4f}s")
+        if "best_params" in self.metrics:
+            print(f"  Best Params:     {self.metrics['best_params']}")
+        if (
+            "best_cv_score" in self.metrics
+            and self.metrics["best_cv_score"] is not None
+        ):
+            print(f"  Best CV Score:   {self.metrics['best_cv_score']:.4f}")
 
         # Dataset statistics & baseline from dataset examination
         if "baseline_value" in dataset_info:
@@ -167,6 +174,8 @@ class BenchmarkResult:
             "r2",
             "pearson_r",
             "training_time",
+            "best_params",
+            "best_cv_score",
             "train_loss",
             "train_mse",
             "train_r2",

@@ -8,9 +8,9 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.neighbors import KNeighborsRegressor
 from torch import nn
+from tqdm import tqdm
 
-from audio_benchmark.tasks.sequence_models import PositionalEncoding
-from audio_benchmark.utils import resolve_device, to_numpy
+from audio_benchmark.utils import PositionalEncoding, resolve_device, to_numpy
 
 
 class BaseRegressor(ABC):
@@ -225,6 +225,7 @@ class MLPBenchmarkRegressor(BaseRegressor):
         batch_size: int = 32,
         weight_decay: float = 1e-4,
         device: str = "auto",
+        show_progress: bool = True,
     ):
         self.hidden_dim = hidden_dim
         self.dropout = dropout
@@ -233,6 +234,7 @@ class MLPBenchmarkRegressor(BaseRegressor):
         self.batch_size = batch_size
         self.weight_decay = weight_decay
         self.device = resolve_device(device)
+        self.show_progress = show_progress
         self.model: _TorchMLPRegressor | None = None
         self.y_mean: float = 0.0
         self.y_std: float = 1.0
@@ -274,7 +276,14 @@ class MLPBenchmarkRegressor(BaseRegressor):
         criterion = nn.MSELoss()
 
         self.model.train()
-        for _ in range(self.epochs):
+        epoch_iter = tqdm(
+            range(self.epochs),
+            desc="Training MLPRegressor",
+            disable=not self.show_progress,
+            leave=False,
+        )
+        for _ in epoch_iter:
+            running_loss = 0.0
             for batch_x, batch_y in loader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
                 optimizer.zero_grad()
@@ -282,6 +291,10 @@ class MLPBenchmarkRegressor(BaseRegressor):
                 loss = criterion(preds, batch_y)
                 loss.backward()
                 optimizer.step()
+                running_loss += float(loss.item())
+            epoch_iter.set_postfix(
+                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
+            )
 
         return self
 
@@ -407,6 +420,7 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         batch_size: int = 16,
         weight_decay: float = 1e-4,
         device: str = "auto",
+        show_progress: bool = True,
     ):
         if d_model % nhead != 0:
             raise ValueError(
@@ -429,6 +443,7 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         self.weight_decay = weight_decay
         self.device_str = device
         self.device = resolve_device(device)
+        self.show_progress = show_progress
         self.model: _TorchTransformerRegressor | None = None
         self.y_mean: float = 0.0
         self.y_std: float = 1.0
@@ -476,7 +491,14 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         criterion = nn.MSELoss()
 
         self.model.train()
-        for _ in range(self.epochs):
+        epoch_iter = tqdm(
+            range(self.epochs),
+            desc="Training TransformerRegressor",
+            disable=not self.show_progress,
+            leave=False,
+        )
+        for _ in epoch_iter:
+            running_loss = 0.0
             for batch_x, batch_y in loader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
                 optimizer.zero_grad()
@@ -484,6 +506,10 @@ class TransformerBenchmarkRegressor(BaseRegressor):
                 loss = criterion(preds, batch_y)
                 loss.backward()
                 optimizer.step()
+                running_loss += float(loss.item())
+            epoch_iter.set_postfix(
+                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
+            )
 
         return self
 
@@ -513,7 +539,7 @@ class TransformerBenchmarkRegressor(BaseRegressor):
 def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegressor:
     """Factory to create a downstream regressor by name or return an existing instance.
 
-    Supported types: 'linear' (or 'ridge'), 'knn', 'mlp', 'transformer'.
+    Supported types: 'linear' (or 'ridge'), 'knn', 'mlp', 'transformer', 'bayes_opt'.
 
     Args:
         regressor_type: Regressor identifier name or an existing BaseRegressor instance.
@@ -534,7 +560,11 @@ def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegre
         return MLPBenchmarkRegressor(**kwargs)
     elif normalized in ("transformer", "transformer_encoder"):
         return TransformerBenchmarkRegressor(**kwargs)
+    elif normalized in ("bayes_opt", "bayesopt", "bayesian_optimization"):
+        from audio_benchmark.bayes_opt import BayesOptRegressor
+
+        return BayesOptRegressor(**kwargs)
     else:
         raise ValueError(
-            f"Unsupported regressor type: '{regressor_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer'."
+            f"Unsupported regressor type: '{regressor_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer', 'bayes_opt'."
         )

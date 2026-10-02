@@ -190,6 +190,13 @@ class GlobalClassificationTask(BaseTask):
             "train_accuracy": train_metrics["accuracy"],
             "training_time": training_time,
         }
+        if hasattr(classifier_inst, "best_params") and classifier_inst.best_params:
+            results["best_params"] = classifier_inst.best_params
+        if (
+            hasattr(classifier_inst, "best_score")
+            and classifier_inst.best_score is not None
+        ):
+            results["best_cv_score"] = classifier_inst.best_score
 
         return results
 

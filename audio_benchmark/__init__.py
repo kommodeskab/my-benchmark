@@ -1,5 +1,6 @@
 """Audio Representation Learning Benchmark Suite."""
 
+from audio_benchmark.bayes_opt import BayesOptClassifier, BayesOptRegressor
 from audio_benchmark.benchmark import AudioBenchmark, BenchmarkResult
 from audio_benchmark.cache import RepresentationCache
 from audio_benchmark.classifiers import (
@@ -57,6 +58,8 @@ __all__ = [
     "BaseMetadataWrapper",
     "BaseRegressor",
     "BaseTask",
+    "BayesOptClassifier",
+    "BayesOptRegressor",
     "BenchmarkError",
     "BenchmarkResult",
     "DummyAudioDataset",

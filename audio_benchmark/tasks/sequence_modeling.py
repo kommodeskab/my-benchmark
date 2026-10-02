@@ -8,6 +8,7 @@ import torch
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from audio_benchmark.dataset import parse_dataset_item, validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
@@ -93,6 +94,7 @@ class SequenceModelingTask(BaseTask):
         device: str = "auto",
         model_kwargs: dict[str, Any] | None = None,
         metric: str = "token_error_rate",
+        show_progress: bool = True,
     ):
         """Initialize the SequenceModelingTask.
 
@@ -109,6 +111,7 @@ class SequenceModelingTask(BaseTask):
             device: Training device ('auto', 'cpu', 'cuda', etc.).
             model_kwargs: Additional kwargs passed to the probe model.
             metric: Primary metric for the task ('token_error_rate', 'sequence_accuracy').
+            show_progress: Whether to display a tqdm progress bar during probe training.
         """
         super().__init__(name=name)
         valid_metrics = ("token_error_rate", "sequence_accuracy")
@@ -132,6 +135,7 @@ class SequenceModelingTask(BaseTask):
         self.lr = lr
         self.device_str = device
         self.model_kwargs = model_kwargs or {}
+        self.show_progress = show_progress
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that dataset metadata contains non-empty target sequences."""
@@ -245,7 +249,13 @@ class SequenceModelingTask(BaseTask):
             total_batches = 0
             start_time = time.perf_counter()
 
-            for _ in range(self.epochs):
+            epoch_iter = tqdm(
+                range(self.epochs),
+                desc="Training CTCProbe",
+                disable=not self.show_progress,
+                leave=False,
+            )
+            for _ in epoch_iter:
                 for batch_reps, batch_targets in loader:
                     batch_reps = batch_reps.to(device)
                     batch_size_cur = batch_reps.size(0)
@@ -278,6 +288,10 @@ class SequenceModelingTask(BaseTask):
 
                     total_loss += float(loss.item())
                     total_batches += 1
+
+                epoch_iter.set_postfix(
+                    {"loss": f"{total_loss / max(1, total_batches):.4f}"}
+                )
 
             training_time = float(time.perf_counter() - start_time)
             train_loss = total_loss / max(1, total_batches)
@@ -314,7 +328,13 @@ class SequenceModelingTask(BaseTask):
             total_batches = 0
             start_time = time.perf_counter()
 
-            for _ in range(self.epochs):
+            epoch_iter = tqdm(
+                range(self.epochs),
+                desc="Training TransformerDecoderProbe",
+                disable=not self.show_progress,
+                leave=False,
+            )
+            for _ in epoch_iter:
                 for batch_reps, dec_in, dec_tgt, padding_mask in loader:
                     batch_reps = batch_reps.to(device)
                     dec_in = dec_in.to(device)
@@ -342,6 +362,10 @@ class SequenceModelingTask(BaseTask):
 
                     total_loss += float(loss.item())
                     total_batches += 1
+
+                epoch_iter.set_postfix(
+                    {"loss": f"{total_loss / max(1, total_batches):.4f}"}
+                )
 
             training_time = float(time.perf_counter() - start_time)
             train_loss = total_loss / max(1, total_batches)
