@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 
 from audio_benchmark.dataset import validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
-from audio_benchmark.regressors.models import BaseRegressor, create_regressor
+from audio_benchmark.regressors.models import BaseRegressor
 from audio_benchmark.tasks.base import BaseTask
 
 
@@ -22,34 +22,31 @@ class RegressionTask(BaseTask):
     The continuous target is extracted from the metadata dictionary of each sample.
     The sequence representations (N, T', C') are pooled over time to produce
     clip-level features (N, C'), which are then fitted and evaluated using
-    a regression model (e.g. Linear/Ridge, KNN, MLP, or DNN).
+    an instantiated BaseRegressor model.
     """
 
     def __init__(
         self,
+        regressor: BaseRegressor,
         name: str = "regression",
         target_key: str = "target",
-        regressor: str | BaseRegressor = "linear",
         pooling: str | Callable[[torch.Tensor], torch.Tensor] = "mean",
         test_size: float = 0.2,
         random_state: int = 42,
         split_key: str | None = None,
-        regressor_kwargs: dict[str, Any] | None = None,
         metric: str = "r2",
     ):
         """Initialize the RegressionTask.
 
         Args:
+            regressor: Downstream regressor instance conforming to BaseRegressor.
             name: Identifier for the task.
             target_key: Key in the sample metadata dictionary containing the regression target.
-            regressor: Downstream regressor model. Can be 'linear', 'knn', 'mlp', 'dnn',
-                or an instance of BaseRegressor.
             pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last',
                 or a callable f(representations) -> pooled_tensor.
             test_size: Proportion of samples to use for test split if split_key is not used.
             random_state: Random seed for train/test split.
             split_key: Optional metadata key (e.g. 'split') specifying 'train' or 'test'.
-            regressor_kwargs: Optional kwargs to pass when instantiating the regressor.
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
         """
         super().__init__(name=name)
@@ -60,12 +57,25 @@ class RegressionTask(BaseTask):
             )
         self.metric = metric
         self.target_key = target_key
-        self.regressor_arg = regressor
+        if regressor is None:
+            raise TypeError(
+                "regressor must be an instantiated BaseRegressor instance, got None. "
+                "Passing None as a model is not allowed."
+            )
+        elif isinstance(regressor, str):
+            raise TypeError(
+                f"Passing strings as models is not supported (got '{regressor}'). "
+                "Please pass an instantiated BaseRegressor instance."
+            )
+        elif not isinstance(regressor, BaseRegressor):
+            raise TypeError(
+                f"regressor must be an instantiated BaseRegressor instance, got {type(regressor).__name__}."
+            )
+        self.regressor = regressor
         self.pooling = pooling
         self.test_size = test_size
         self.random_state = random_state
         self.split_key = split_key
-        self.regressor_kwargs = regressor_kwargs or {}
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that the dataset metadata contains the expected target_key."""
@@ -113,13 +123,9 @@ class RegressionTask(BaseTask):
 
         targets = np.array(raw_targets, dtype=np.float32)
 
-        # Instantiate regressor early to check if it accepts unpooled sequences
-        regressor_inst = create_regressor(self.regressor_arg, **self.regressor_kwargs)
-        regressor_name = (
-            self.regressor_arg
-            if isinstance(self.regressor_arg, str)
-            else regressor_inst.__class__.__name__
-        )
+        # Regressor instance
+        regressor_inst = self.regressor
+        regressor_name = regressor_inst.__class__.__name__
 
         is_sequence_probe = getattr(regressor_inst, "accepts_sequence", False)
         if is_sequence_probe:
@@ -163,7 +169,7 @@ class RegressionTask(BaseTask):
 
         results = {
             "task": self.name,
-            "regressor": str(regressor_name).lower(),
+            "regressor": regressor_name,
             "pooling": pooling_name,
             "value": float(metrics[self.metric]),
             "mse": metrics["mse"],

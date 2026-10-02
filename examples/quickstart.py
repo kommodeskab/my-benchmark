@@ -13,8 +13,12 @@ from audio_benchmark import (
     FrameClassificationTask,
     FrameRegressionTask,
     GlobalClassificationTask,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkRegressor,
     RegressionTask,
     SequenceModelingTask,
+    TransformerBenchmarkClassifier,
+    TransformerBenchmarkRegressor,
 )
 
 
@@ -38,7 +42,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=GlobalClassificationTask(classifier="knn"),
+        task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
         batch_size=16,
     )
 
@@ -46,7 +50,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=RegressionTask(regressor="linear"),
+        task=RegressionTask(regressor=LinearBenchmarkRegressor()),
     )
 
     result_global_clf_tf = benchmark.run(
@@ -54,7 +58,7 @@ def main():
         model_name=model_name,
         dataset=dataset,
         task=GlobalClassificationTask(
-            classifier="transformer", classifier_kwargs={"epochs": 15}
+            classifier=TransformerBenchmarkClassifier(epochs=15)
         ),
     )
 
@@ -62,21 +66,21 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=RegressionTask(regressor="transformer", regressor_kwargs={"epochs": 15}),
+        task=RegressionTask(regressor=TransformerBenchmarkRegressor(epochs=15)),
     )
 
     result_frame_clf = benchmark.run(
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=FrameClassificationTask(classifier="knn"),
+        task=FrameClassificationTask(classifier=KNNBenchmarkClassifier()),
     )
 
     result_frame_reg = benchmark.run(
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=FrameRegressionTask(regressor="linear"),
+        task=FrameRegressionTask(regressor=LinearBenchmarkRegressor()),
     )
 
     result_seq_ctc = benchmark.run(

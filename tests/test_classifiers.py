@@ -8,7 +8,6 @@ from audio_benchmark.classifiers import (
     LinearBenchmarkClassifier,
     MLPBenchmarkClassifier,
     TransformerBenchmarkClassifier,
-    create_classifier,
 )
 
 
@@ -123,50 +122,3 @@ def test_transformer_classifier():
     )
     clf_mean.fit(X[:8], y[:8])
     assert len(clf_mean.predict(X[8:])) == 2
-
-
-def test_create_classifier_factory():
-    linear = create_classifier("linear")
-    assert isinstance(linear, LinearBenchmarkClassifier)
-    assert linear.model_type == "logistic"
-
-    ridge = create_classifier("ridge")
-    assert isinstance(ridge, LinearBenchmarkClassifier)
-    assert ridge.model_type == "ridge"
-
-    knn = create_classifier("knn")
-    assert isinstance(knn, KNNBenchmarkClassifier)
-
-    mlp = create_classifier("mlp")
-    assert isinstance(mlp, MLPBenchmarkClassifier)
-
-    tf = create_classifier("transformer")
-    assert isinstance(tf, TransformerBenchmarkClassifier)
-
-    bayes_opt = create_classifier("bayes_opt")
-    from audio_benchmark.bayes_opt import BayesOptClassifier
-
-    assert isinstance(bayes_opt, BayesOptClassifier)
-
-    same_linear = create_classifier(linear)
-    assert same_linear is linear
-
-    same_knn = create_classifier(knn)
-    assert same_knn is knn
-
-    with pytest.raises(ValueError, match="Unsupported classifier type"):
-        create_classifier("unsupported_classifier")
-
-    for alias in (
-        "logistic",
-        "logistic_regression",
-        "linear_classifier",
-        "ridge_classifier",
-        "k_nearest_neighbors",
-        "multilayer_perceptron",
-        "transformer_encoder",
-        "bayesopt",
-        "bayesian_optimization",
-    ):
-        with pytest.raises(ValueError, match="Unsupported classifier type"):
-            create_classifier(alias)

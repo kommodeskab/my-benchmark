@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -11,8 +12,20 @@ import torch
 from sklearn.model_selection import KFold, StratifiedKFold
 from tqdm import tqdm
 
-from audio_benchmark.classifiers.models import BaseClassifier, create_classifier
-from audio_benchmark.regressors.models import BaseRegressor, create_regressor
+from audio_benchmark.classifiers.models import (
+    BaseClassifier,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
+    MLPBenchmarkClassifier,
+    TransformerBenchmarkClassifier,
+)
+from audio_benchmark.regressors.models import (
+    BaseRegressor,
+    KNNBenchmarkRegressor,
+    LinearBenchmarkRegressor,
+    MLPBenchmarkRegressor,
+    TransformerBenchmarkRegressor,
+)
 from audio_benchmark.utils import to_numpy
 
 
@@ -82,27 +95,47 @@ def _sample_param(trial: optuna.Trial, name: str, spec: Any) -> Any:
     return spec
 
 
-def get_default_classifier_param_space(model_name: str) -> dict[str, Any]:
+def get_default_classifier_param_space(
+    base_model: BaseClassifier | type[BaseClassifier],
+) -> dict[str, Any]:
     """Retrieve default hyperparameter search space for standard classifiers."""
-    norm = str(model_name).lower().strip()
-    if norm == "linear":
+    if base_model is None:
+        raise TypeError(
+            "base_model cannot be None. Please pass an instantiated BaseClassifier instance or subclass."
+        )
+    elif isinstance(base_model, str):
+        raise TypeError(
+            f"Passing strings as models is not supported (got '{base_model}'). "
+            "Please pass an instantiated BaseClassifier instance."
+        )
+
+    cls = base_model if isinstance(base_model, type) else base_model.__class__
+    if not issubclass(cls, BaseClassifier):
+        raise TypeError(
+            f"base_model must be an instance or subclass of BaseClassifier, got {cls.__name__}."
+        )
+
+    if issubclass(cls, LinearBenchmarkClassifier):
+        if (
+            not isinstance(base_model, type)
+            and getattr(base_model, "model_type", None) == "ridge"
+        ):
+            return {"alpha": (1e-3, 1e3, "log")}
         return {"C": (1e-3, 1e2, "log")}
-    elif norm == "ridge":
-        return {"alpha": (1e-3, 1e3, "log")}
-    elif norm == "knn":
+    elif issubclass(cls, KNNBenchmarkClassifier):
         return {
             "n_neighbors": (1, 15),
             "metric": ["minkowski", "cosine", "euclidean"],
             "weights": ["uniform", "distance"],
         }
-    elif norm == "mlp":
+    elif issubclass(cls, MLPBenchmarkClassifier):
         return {
             "hidden_dim": [32, 64, 128, 256],
             "dropout": (0.0, 0.5),
             "lr": (1e-4, 1e-2, "log"),
             "weight_decay": (1e-6, 1e-2, "log"),
         }
-    elif norm == "transformer":
+    elif issubclass(cls, TransformerBenchmarkClassifier):
         return {
             "d_model": [32, 64, 128],
             "nhead": [2, 4],
@@ -115,25 +148,42 @@ def get_default_classifier_param_space(model_name: str) -> dict[str, Any]:
     return {}
 
 
-def get_default_regressor_param_space(model_name: str) -> dict[str, Any]:
+def get_default_regressor_param_space(
+    base_model: BaseRegressor | type[BaseRegressor],
+) -> dict[str, Any]:
     """Retrieve default hyperparameter search space for standard regressors."""
-    norm = str(model_name).lower().strip()
-    if norm == "linear":
+    if base_model is None:
+        raise TypeError(
+            "base_model cannot be None. Please pass an instantiated BaseRegressor instance or subclass."
+        )
+    elif isinstance(base_model, str):
+        raise TypeError(
+            f"Passing strings as models is not supported (got '{base_model}'). "
+            "Please pass an instantiated BaseRegressor instance."
+        )
+
+    cls = base_model if isinstance(base_model, type) else base_model.__class__
+    if not issubclass(cls, BaseRegressor):
+        raise TypeError(
+            f"base_model must be an instance or subclass of BaseRegressor, got {cls.__name__}."
+        )
+
+    if issubclass(cls, LinearBenchmarkRegressor):
         return {"alpha": (1e-3, 1e3, "log")}
-    elif norm == "knn":
+    elif issubclass(cls, KNNBenchmarkRegressor):
         return {
             "n_neighbors": (1, 15),
             "metric": ["minkowski", "cosine", "euclidean"],
             "weights": ["uniform", "distance"],
         }
-    elif norm == "mlp":
+    elif issubclass(cls, MLPBenchmarkRegressor):
         return {
             "hidden_dim": [32, 64, 128, 256],
             "dropout": (0.0, 0.5),
             "lr": (1e-4, 1e-2, "log"),
             "weight_decay": (1e-6, 1e-2, "log"),
         }
-    elif norm == "transformer":
+    elif issubclass(cls, TransformerBenchmarkRegressor):
         return {
             "d_model": [32, 64, 128],
             "nhead": [2, 4],
@@ -153,8 +203,7 @@ class BayesOptClassifier(BaseClassifier):
     with Optuna, and fits the best-performing model configuration.
 
     Args:
-        base_model: Identifier or instance of the underlying classifier
-            ('linear', 'ridge', 'knn', 'mlp', 'transformer', or BaseClassifier instance/class).
+        base_model: Instantiated BaseClassifier instance to optimize.
         param_space: Custom search space dict or callable taking `trial` and returning a param dict.
             If None, the default search space for `base_model` is used.
         n_trials: Number of Bayesian optimization trials to run.
@@ -167,7 +216,7 @@ class BayesOptClassifier(BaseClassifier):
 
     def __init__(
         self,
-        base_model: str | BaseClassifier | type[BaseClassifier] = "knn",
+        base_model: BaseClassifier,
         param_space: (
             dict[str, Any] | Callable[[optuna.Trial], dict[str, Any]] | None
         ) = None,
@@ -178,7 +227,23 @@ class BayesOptClassifier(BaseClassifier):
         show_progress: bool = True,
         base_kwargs: dict[str, Any] | None = None,
     ):
+        if base_model is None:
+            raise TypeError(
+                "base_model must be an instantiated BaseClassifier instance, got None. "
+                "Passing None as a model is not allowed."
+            )
+        elif isinstance(base_model, str):
+            raise TypeError(
+                f"Passing strings as models is not supported (got '{base_model}'). "
+                "Please pass an instantiated BaseClassifier instance."
+            )
+        elif not isinstance(base_model, BaseClassifier):
+            raise TypeError(
+                f"base_model must be an instantiated BaseClassifier instance, got {type(base_model).__name__}."
+            )
+
         self.base_model = base_model
+        self.model_name = base_model.__class__.__name__
         self.n_trials = n_trials
         self.cv = cv
         self.metric = metric
@@ -186,18 +251,8 @@ class BayesOptClassifier(BaseClassifier):
         self.show_progress = show_progress
         self.base_kwargs = dict(base_kwargs or {})
 
-        # Determine model name identifier
-        if isinstance(base_model, str):
-            self.model_name = base_model.lower().strip()
-        elif isinstance(base_model, type):
-            self.model_name = base_model.__name__
-        elif hasattr(base_model, "__class__"):
-            self.model_name = base_model.__class__.__name__
-        else:
-            self.model_name = str(base_model)
-
         # Set parameter space
-        if param_space is None and isinstance(base_model, str):
+        if param_space is None:
             self.param_space = get_default_classifier_param_space(base_model)
         else:
             self.param_space = param_space or {}
@@ -212,8 +267,6 @@ class BayesOptClassifier(BaseClassifier):
         """Indicate whether the underlying model accepts unpooled sequence inputs."""
         if self.best_model is not None:
             return getattr(self.best_model, "accepts_sequence", False)
-        if isinstance(self.base_model, str):
-            return self.base_model.lower().strip() == "transformer"
         return getattr(self.base_model, "accepts_sequence", False)
 
     def _sample_params(self, trial: optuna.Trial) -> dict[str, Any]:
@@ -229,22 +282,27 @@ class BayesOptClassifier(BaseClassifier):
         self, model_kwargs: dict[str, Any] | None = None
     ) -> BaseClassifier:
         """Instantiate an underlying classifier with the given parameters."""
-        kwargs = dict(model_kwargs or {})
-        if self.model_name in ("linear", "ridge", "knn"):
-            kwargs.pop("show_progress", None)
+        sig = inspect.signature(self.base_model.__class__.__init__)
+        init_kwargs = {}
+        for p in sig.parameters:
+            if p in ("self", "args", "kwargs"):
+                continue
+            attr = (
+                "device_str"
+                if p == "device" and hasattr(self.base_model, "device_str")
+                else p
+            )
+            if hasattr(self.base_model, attr):
+                init_kwargs[p] = getattr(self.base_model, attr)
 
-        if isinstance(self.base_model, str):
-            return create_classifier(self.base_model, **kwargs)
-        elif isinstance(self.base_model, type) and issubclass(
-            self.base_model, BaseClassifier
-        ):
-            return self.base_model(**kwargs)
-        elif isinstance(self.base_model, BaseClassifier):
-            return self.base_model.__class__(**kwargs)
-        elif callable(self.base_model):
-            return self.base_model(**kwargs)
-        else:
-            raise TypeError(f"Unsupported base_model type: {type(self.base_model)}")
+        init_kwargs.update(self.base_kwargs)
+        if model_kwargs:
+            init_kwargs.update(model_kwargs)
+
+        if not any(p == "show_progress" for p in sig.parameters):
+            init_kwargs.pop("show_progress", None)
+
+        return self.base_model.__class__(**init_kwargs)
 
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
@@ -360,8 +418,7 @@ class BayesOptRegressor(BaseRegressor):
     with Optuna, and fits the best-performing model configuration.
 
     Args:
-        base_model: Identifier or instance of the underlying regressor
-            ('linear', 'ridge', 'knn', 'mlp', 'transformer', or BaseRegressor instance/class).
+        base_model: Instantiated BaseRegressor instance to optimize.
         param_space: Custom search space dict or callable taking `trial` and returning a param dict.
             If None, the default search space for `base_model` is used.
         n_trials: Number of Bayesian optimization trials to run.
@@ -374,7 +431,7 @@ class BayesOptRegressor(BaseRegressor):
 
     def __init__(
         self,
-        base_model: str | BaseRegressor | type[BaseRegressor] = "knn",
+        base_model: BaseRegressor,
         param_space: (
             dict[str, Any] | Callable[[optuna.Trial], dict[str, Any]] | None
         ) = None,
@@ -385,7 +442,23 @@ class BayesOptRegressor(BaseRegressor):
         show_progress: bool = True,
         base_kwargs: dict[str, Any] | None = None,
     ):
+        if base_model is None:
+            raise TypeError(
+                "base_model must be an instantiated BaseRegressor instance, got None. "
+                "Passing None as a model is not allowed."
+            )
+        elif isinstance(base_model, str):
+            raise TypeError(
+                f"Passing strings as models is not supported (got '{base_model}'). "
+                "Please pass an instantiated BaseRegressor instance."
+            )
+        elif not isinstance(base_model, BaseRegressor):
+            raise TypeError(
+                f"base_model must be an instantiated BaseRegressor instance, got {type(base_model).__name__}."
+            )
+
         self.base_model = base_model
+        self.model_name = base_model.__class__.__name__
         self.n_trials = n_trials
         self.cv = cv
         self.metric = metric
@@ -393,16 +466,8 @@ class BayesOptRegressor(BaseRegressor):
         self.show_progress = show_progress
         self.base_kwargs = dict(base_kwargs or {})
 
-        if isinstance(base_model, str):
-            self.model_name = base_model.lower().strip()
-        elif isinstance(base_model, type):
-            self.model_name = base_model.__name__
-        elif hasattr(base_model, "__class__"):
-            self.model_name = base_model.__class__.__name__
-        else:
-            self.model_name = str(base_model)
-
-        if param_space is None and isinstance(base_model, str):
+        # Set parameter space
+        if param_space is None:
             self.param_space = get_default_regressor_param_space(base_model)
         else:
             self.param_space = param_space or {}
@@ -417,8 +482,6 @@ class BayesOptRegressor(BaseRegressor):
         """Indicate whether the underlying model accepts unpooled sequence inputs."""
         if self.best_model is not None:
             return getattr(self.best_model, "accepts_sequence", False)
-        if isinstance(self.base_model, str):
-            return self.base_model.lower().strip() == "transformer"
         return getattr(self.base_model, "accepts_sequence", False)
 
     def _sample_params(self, trial: optuna.Trial) -> dict[str, Any]:
@@ -434,22 +497,27 @@ class BayesOptRegressor(BaseRegressor):
         self, model_kwargs: dict[str, Any] | None = None
     ) -> BaseRegressor:
         """Instantiate an underlying regressor with the given parameters."""
-        kwargs = dict(model_kwargs or {})
-        if self.model_name in ("linear", "knn"):
-            kwargs.pop("show_progress", None)
+        sig = inspect.signature(self.base_model.__class__.__init__)
+        init_kwargs = {}
+        for p in sig.parameters:
+            if p in ("self", "args", "kwargs"):
+                continue
+            attr = (
+                "device_str"
+                if p == "device" and hasattr(self.base_model, "device_str")
+                else p
+            )
+            if hasattr(self.base_model, attr):
+                init_kwargs[p] = getattr(self.base_model, attr)
 
-        if isinstance(self.base_model, str):
-            return create_regressor(self.base_model, **kwargs)
-        elif isinstance(self.base_model, type) and issubclass(
-            self.base_model, BaseRegressor
-        ):
-            return self.base_model(**kwargs)
-        elif isinstance(self.base_model, BaseRegressor):
-            return self.base_model.__class__(**kwargs)
-        elif callable(self.base_model):
-            return self.base_model(**kwargs)
-        else:
-            raise TypeError(f"Unsupported base_model type: {type(self.base_model)}")
+        init_kwargs.update(self.base_kwargs)
+        if model_kwargs:
+            init_kwargs.update(model_kwargs)
+
+        if not any(p == "show_progress" for p in sig.parameters):
+            init_kwargs.pop("show_progress", None)
+
+        return self.base_model.__class__(**init_kwargs)
 
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor

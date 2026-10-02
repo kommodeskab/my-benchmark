@@ -96,30 +96,38 @@ Classifies a single categorical label for the entire audio clip.
 
 - **Metadata Key**: `'label'` (or custom via `label_key`).
 - **How it works**:
-  - For `'linear'`, `'knn'`, and `'mlp'`: sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
-  - For `'transformer'`: **no pooling** is applied; a non-causal Transformer encoder attends across all temporal frames directly.
+  - For models operating on pooled representations (such as `LinearBenchmarkClassifier`, `KNNBenchmarkClassifier`, `MLPBenchmarkClassifier`): sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
+  - For models accepting sequences directly (such as `TransformerBenchmarkClassifier`): **no pooling** is applied; a non-causal Transformer encoder attends across all temporal frames directly.
 - **Parameters**:
-  - `classifier` (`str | BaseClassifier`, default `"knn"`): `'linear'`, `'knn'`, `'mlp'`, or `'transformer'`.
+  - `classifier` (`BaseClassifier`, required): An explicit instantiated classifier model (e.g., `LinearBenchmarkClassifier()`, `KNNBenchmarkClassifier()`, `MLPBenchmarkClassifier()`, `TransformerBenchmarkClassifier()`, or `BayesOptClassifier(...)`). Passing `None` is not allowed.
   - `label_key` (`str`, default `"label"`): Key in sample metadata containing the ground truth label.
-  - `pooling` (`str`, default `"mean"`): Temporal pooling method for `'linear'`, `'knn'`, and `'mlp'` (`"mean"`, `"max"`, `"first"`, `"last"`). Bypassed when using `'transformer'`.
+  - `pooling` (`str`, default `"mean"`): Temporal pooling method for classifiers that do not accept 3D sequence tensors (`"mean"`, `"max"`, `"first"`, `"last"`). Bypassed when using sequence models like `TransformerBenchmarkClassifier`.
   - `test_size` (`float`, default `0.2`): Fraction of dataset reserved for testing.
   - `split_key` (`str | None`, default `None`): Optional metadata key specifying pre-defined splits (`"train"` / `"test"`).
-  - `classifier_kwargs` (`dict | None`): Hyperparameters passed to the classifier (e.g., `C` for linear logistic; `n_neighbors` for KNN; `epochs`, `lr`, `d_model`, `nhead` for MLP/Transformer).
   - `metric` (`str`, default `"accuracy"`): Main metric for the task (`"accuracy"`, `"macro_f1"`, `"micro_f1"`), also populated in `result.metrics["value"]`.
 
 ```python
-from audio_benchmark import GlobalClassificationTask
+from audio_benchmark import (
+    GlobalClassificationTask,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
+    TransformerBenchmarkClassifier,
+)
 
 # Linear classifier (Logistic Regression) with mean pooling
-task_linear = GlobalClassificationTask(classifier="linear", pooling="mean")
+task_linear = GlobalClassificationTask(
+    classifier=LinearBenchmarkClassifier(model_type="logistic", C=1.0),
+    pooling="mean",
+)
 
 # KNN with mean pooling
-task_knn = GlobalClassificationTask(classifier="knn", pooling="mean")
+task_knn = GlobalClassificationTask(
+    classifier=KNNBenchmarkClassifier(n_neighbors=5),
+    pooling="mean",
+)
 
 # Non-causal Transformer (no pooling, attends across all features)
-task_tf = GlobalClassificationTask(
-    classifier="transformer", classifier_kwargs={"epochs": 20}
-)
+task_tf = GlobalClassificationTask(classifier=TransformerBenchmarkClassifier(epochs=20))
 ```
 
 ---
@@ -129,22 +137,25 @@ Predicts a continuous target value for the entire audio clip.
 
 - **Metadata Key**: `'target'` (or custom via `target_key`).
 - **How it works**:
-  - For `'linear'`, `'knn'`, and `'mlp'`: sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
-  - For `'transformer'`: **no pooling** is applied; a non-causal Transformer attends across all temporal frames directly.
+  - For models operating on pooled representations (such as `LinearBenchmarkRegressor`, `KNNBenchmarkRegressor`, `MLPBenchmarkRegressor`): sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
+  - For models accepting sequences directly (such as `TransformerBenchmarkRegressor`): **no pooling** is applied; a non-causal Transformer attends across all temporal frames directly.
 - **Parameters**:
-  - `regressor` (`str | BaseRegressor`, default `"linear"`): `'linear'`, `'knn'`, `'mlp'`, or `'transformer'`.
+  - `regressor` (`BaseRegressor`, required): An explicit instantiated regressor model (e.g., `LinearBenchmarkRegressor()`, `KNNBenchmarkRegressor()`, `MLPBenchmarkRegressor()`, `TransformerBenchmarkRegressor()`, or `BayesOptRegressor(...)`). Passing `None` is not allowed.
   - `target_key` (`str`, default `"target"`): Key in sample metadata containing the numeric target.
-  - `pooling` (`str`, default `"mean"`): Temporal pooling method for linear/KNN/MLP. Bypassed for `'transformer'`.
+  - `pooling` (`str`, default `"mean"`): Temporal pooling method for linear/KNN/MLP. Bypassed for sequence models like `TransformerBenchmarkRegressor`.
   - `test_size` (`float`, default `0.2`): Fraction of dataset reserved for testing.
   - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined train/test splits.
-  - `regressor_kwargs` (`dict | None`): Hyperparameters for the regressor (e.g., `alpha` for linear ridge; `epochs`, `lr` for MLP/Transformer).
   - `metric` (`str`, default `"r2"`): Main metric for the task (`"r2"`, `"mse"`, `"rmse"`, `"mae"`, `"pearson_r"`), also populated in `result.metrics["value"]`.
 
 ```python
-from audio_benchmark import RegressionTask
+from audio_benchmark import (
+    LinearBenchmarkRegressor,
+    RegressionTask,
+    TransformerBenchmarkRegressor,
+)
 
-task_linear = RegressionTask(regressor="linear")
-task_tf = RegressionTask(regressor="transformer", regressor_kwargs={"epochs": 20})
+task_linear = RegressionTask(regressor=LinearBenchmarkRegressor(alpha=1.0))
+task_tf = RegressionTask(regressor=TransformerBenchmarkRegressor(epochs=20))
 ```
 
 ---
@@ -155,17 +166,16 @@ Classifies a label for each frame across time.
 - **Metadata Key**: `'frame_labels'` (or custom via `label_key`). Must be a sequence of length $T$ matching the raw audio length.
 - **How it works**: When the representation model downsamples audio from $T$ to $T'$, this task downsamples the ground truth labels to $T'$ by taking the most common label (mode) in each window.
 - **Parameters**:
-  - `classifier` (`str | BaseClassifier`, default `"knn"`): `'linear'`, `'knn'`, or `'mlp'`.
+  - `classifier` (`BaseClassifier`, required): An explicit instantiated classifier model (e.g., `LinearBenchmarkClassifier()`, `KNNBenchmarkClassifier()`, or `MLPBenchmarkClassifier()`). Passing `None` is not allowed.
   - `label_key` (`str`, default `"frame_labels"`): Metadata key with the per-frame label sequence.
   - `test_size` (`float`, default `0.2`): Train/test split at the audio clip level (avoids temporal leakage).
   - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined splits.
-  - `classifier_kwargs` (`dict | None`): Hyperparameters passed to the classifier.
   - `metric` (`str`, default `"accuracy"`): Main metric for the task (`"accuracy"`, `"macro_f1"`, `"micro_f1"`), also populated in `result.metrics["value"]`.
 
 ```python
-from audio_benchmark import FrameClassificationTask
+from audio_benchmark import FrameClassificationTask, KNNBenchmarkClassifier
 
-task_frame_clf = FrameClassificationTask(classifier="knn")
+task_frame_clf = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
 ```
 
 ---
@@ -176,17 +186,16 @@ Predicts a continuous target for each frame across time.
 - **Metadata Key**: `'frame_targets'` (or custom via `target_key`). Must be a sequence of length $T$ matching raw audio length.
 - **How it works**: Downsamples the continuous targets from $T$ to $T'$ by computing the mean value in each downsampled region.
 - **Parameters**:
-  - `regressor` (`str | BaseRegressor`, default `"linear"`): `'linear'`, `'knn'`, or `'mlp'`.
+  - `regressor` (`BaseRegressor`, required): An explicit instantiated regressor model (e.g., `LinearBenchmarkRegressor()`, `KNNBenchmarkRegressor()`, or `MLPBenchmarkRegressor()`). Passing `None` is not allowed.
   - `target_key` (`str`, default `"frame_targets"`): Metadata key with the per-frame numeric sequence.
   - `test_size` (`float`, default `0.2`): Train/test split at the clip level.
   - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined splits.
-  - `regressor_kwargs` (`dict | None`): Hyperparameters passed to the regressor.
   - `metric` (`str`, default `"r2"`): Main metric for the task (`"r2"`, `"mse"`, `"rmse"`, `"mae"`, `"pearson_r"`), also populated in `result.metrics["value"]`.
 
 ```python
-from audio_benchmark import FrameRegressionTask
+from audio_benchmark import FrameRegressionTask, LinearBenchmarkRegressor
 
-task_frame_reg = FrameRegressionTask(regressor="linear")
+task_frame_reg = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
 ```
 
 ---
@@ -299,6 +308,8 @@ from audio_benchmark import (
     DummyAudioDataset,
     DummyAudioModel,
     GlobalClassificationTask,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkRegressor,
     RegressionTask,
     SequenceModelingTask,
 )
@@ -315,7 +326,7 @@ res_clf = benchmark.run(
     model=model,
     model_name="my_model_v1",
     dataset=dataset,
-    task=GlobalClassificationTask(classifier="knn"),
+    task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
 )
 
 # Reuses cached representations automatically!
@@ -323,7 +334,7 @@ res_reg = benchmark.run(
     model=model,
     model_name="my_model_v1",
     dataset=dataset,
-    task=RegressionTask(regressor="linear"),
+    task=RegressionTask(regressor=LinearBenchmarkRegressor()),
 )
 
 res_seq = benchmark.run(
@@ -362,11 +373,13 @@ from audio_benchmark import (
     BayesOptClassifier,
     BayesOptRegressor,
     GlobalClassificationTask,
+    KNNBenchmarkClassifier,
+    MLPBenchmarkClassifier,
     RegressionTask,
 )
 
 # Optimize KNN classifier hyperparameters (e.g. n_neighbors, distance metric)
-opt_clf = BayesOptClassifier(base_model="knn", n_trials=15, cv=3)
+opt_clf = BayesOptClassifier(base_model=KNNBenchmarkClassifier(), n_trials=15, cv=3)
 task_clf = GlobalClassificationTask(classifier=opt_clf)
 
 result = benchmark.run(
@@ -387,7 +400,9 @@ custom_space = {
     "lr": (1e-4, 1e-2, "log"),  # Continuous log-uniform float
     "dropout": (0.0, 0.4),  # Continuous uniform float
 }
-opt_mlp = BayesOptClassifier(base_model="mlp", param_space=custom_space, n_trials=10)
+opt_mlp = BayesOptClassifier(
+    base_model=MLPBenchmarkClassifier(), param_space=custom_space, n_trials=10
+)
 ```
 
 ---

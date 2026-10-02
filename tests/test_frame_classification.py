@@ -4,7 +4,14 @@ import pytest
 import torch
 from torch.utils.data import Dataset
 
-from audio_benchmark import AudioBenchmark, DummyAudioDataset, DummyAudioModel
+from audio_benchmark import (
+    AudioBenchmark,
+    DummyAudioDataset,
+    DummyAudioModel,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
+    MLPBenchmarkClassifier,
+)
 from audio_benchmark.exceptions import InvalidDatasetError
 from audio_benchmark.tasks.frame_classification import FrameClassificationTask
 
@@ -24,16 +31,15 @@ class MismatchedFrameDataset(Dataset):
 
 def test_frame_classification_with_knn_and_mlp():
     task_linear = FrameClassificationTask(
-        classifier="linear", test_size=0.25, random_state=42
+        classifier=LinearBenchmarkClassifier(), test_size=0.25, random_state=42
     )
     task_knn = FrameClassificationTask(
-        classifier="knn", test_size=0.25, random_state=42
+        classifier=KNNBenchmarkClassifier(), test_size=0.25, random_state=42
     )
     task_mlp = FrameClassificationTask(
-        classifier="mlp",
+        classifier=MLPBenchmarkClassifier(epochs=1, device="cpu"),
         test_size=0.25,
         random_state=42,
-        classifier_kwargs={"epochs": 1, "device": "cpu"},
     )
 
     # 8 clips, each representation sequence length 4, dim 8
@@ -66,7 +72,9 @@ def test_frame_classification_with_knn_and_mlp():
 
 
 def test_frame_classification_dataset_validation():
-    task = FrameClassificationTask(label_key="frame_labels")
+    task = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(), label_key="frame_labels"
+    )
     bad_ds = MismatchedFrameDataset()
 
     with pytest.raises(InvalidDatasetError, match="Length mismatch in 'frame_labels'"):
@@ -74,7 +82,9 @@ def test_frame_classification_dataset_validation():
 
 
 def test_frame_classification_with_split_key():
-    task = FrameClassificationTask(classifier="knn", split_key="split")
+    task = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(), split_key="split"
+    )
     reps = torch.randn(6, 3, 8)
     meta = []
     for i in range(6):
@@ -95,7 +105,7 @@ def test_benchmark_runner_with_frame_classification(tmp_path):
     # DummyAudioDataset generates frame_labels of length audio_length
     dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
-    task = FrameClassificationTask(classifier="knn")
+    task = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
 
     result = benchmark.run(
         model=model,
@@ -111,3 +121,15 @@ def test_benchmark_runner_with_frame_classification(tmp_path):
     assert "T_orig" not in result.metrics
     assert result.extra_info["frame_length"] == 320
     assert result.extra_info["train_clips"] == 6
+
+
+def test_frame_classification_string_classifier_raises():
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        FrameClassificationTask(classifier="knn")
+
+
+def test_frame_classification_none_or_missing_classifier_raises():
+    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+        FrameClassificationTask(classifier=None)
+    with pytest.raises(TypeError):
+        FrameClassificationTask()

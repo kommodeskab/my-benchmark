@@ -11,6 +11,8 @@ from audio_benchmark import (
     FrameClassificationTask,
     FrameRegressionTask,
     GlobalClassificationTask,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkRegressor,
     RegressionTask,
     SequenceModelingTask,
 )
@@ -79,7 +81,7 @@ def test_benchmark_result_print_summary_handles_value(capsys):
 
 
 def test_global_classification_task_value():
-    task_default = GlobalClassificationTask(classifier="knn")
+    task_default = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
     reps = torch.randn(12, 4, 16)
     meta = [{"label": i % 3} for i in range(12)]
 
@@ -89,18 +91,20 @@ def test_global_classification_task_value():
     assert res_default["value"] == res_default["accuracy"]
 
     # Custom metric: macro_f1
-    task_custom = GlobalClassificationTask(classifier="knn", metric="macro_f1")
+    task_custom = GlobalClassificationTask(
+        classifier=KNNBenchmarkClassifier(), metric="macro_f1"
+    )
     res_custom = task_custom.evaluate(reps, meta)
     assert "value" in res_custom
     assert res_custom["value"] == res_custom["macro_f1"]
 
     # Invalid metric
     with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        GlobalClassificationTask(metric="invalid")
+        GlobalClassificationTask(classifier=KNNBenchmarkClassifier(), metric="invalid")
 
 
 def test_frame_classification_task_value():
-    task_default = FrameClassificationTask(classifier="knn")
+    task_default = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
     reps = torch.randn(8, 4, 16)
     meta = [{"frame_labels": [i % 2] * 16} for i in range(8)]
 
@@ -110,17 +114,19 @@ def test_frame_classification_task_value():
     assert res_default["value"] == res_default["accuracy"]
 
     # Custom metric: macro_f1
-    task_custom = FrameClassificationTask(classifier="knn", metric="macro_f1")
+    task_custom = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(), metric="macro_f1"
+    )
     res_custom = task_custom.evaluate(reps, meta)
     assert "value" in res_custom
     assert res_custom["value"] == res_custom["macro_f1"]
 
     with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        FrameClassificationTask(metric="invalid")
+        FrameClassificationTask(classifier=KNNBenchmarkClassifier(), metric="invalid")
 
 
 def test_regression_task_value():
-    task_default = RegressionTask(regressor="linear")
+    task_default = RegressionTask(regressor=LinearBenchmarkRegressor())
     reps = torch.randn(12, 4, 16)
     meta = [{"target": float(i * 0.5)} for i in range(12)]
 
@@ -130,18 +136,18 @@ def test_regression_task_value():
     assert res_default["value"] == res_default["r2"]
 
     # Custom metric: mse
-    task_custom = RegressionTask(regressor="linear", metric="mse")
+    task_custom = RegressionTask(regressor=LinearBenchmarkRegressor(), metric="mse")
     res_custom = task_custom.evaluate(reps, meta)
     assert "value" in res_custom
     assert "mse" in res_custom
     assert res_custom["value"] == res_custom["mse"]
 
     with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        RegressionTask(metric="invalid")
+        RegressionTask(regressor=LinearBenchmarkRegressor(), metric="invalid")
 
 
 def test_frame_regression_task_value():
-    task_default = FrameRegressionTask(regressor="linear")
+    task_default = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
     reps = torch.randn(8, 4, 16)
     meta = [
         {"frame_targets": [float(i + j * 0.1) for j in range(16)]} for i in range(8)
@@ -153,14 +159,16 @@ def test_frame_regression_task_value():
     assert res_default["value"] == res_default["r2"]
 
     # Custom metric: mae
-    task_custom = FrameRegressionTask(regressor="linear", metric="mae")
+    task_custom = FrameRegressionTask(
+        regressor=LinearBenchmarkRegressor(), metric="mae"
+    )
     res_custom = task_custom.evaluate(reps, meta)
     assert "value" in res_custom
     assert "mae" in res_custom
     assert res_custom["value"] == res_custom["mae"]
 
     with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        FrameRegressionTask(metric="invalid")
+        FrameRegressionTask(regressor=LinearBenchmarkRegressor(), metric="invalid")
 
 
 def test_sequence_modeling_task_value():
@@ -196,7 +204,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
         model=model,
         model_name="test_model",
         dataset=dataset,
-        task=GlobalClassificationTask(classifier="knn"),
+        task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
     )
     assert "value" in res_clf.metrics
     assert res_clf.metrics["value"] == res_clf.metrics["accuracy"]
@@ -207,7 +215,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
         model=model,
         model_name="test_model",
         dataset=dataset,
-        task=RegressionTask(regressor="linear"),
+        task=RegressionTask(regressor=LinearBenchmarkRegressor()),
     )
     assert "value" in res_reg.metrics
     assert res_reg.metrics["value"] == res_reg.metrics["r2"]

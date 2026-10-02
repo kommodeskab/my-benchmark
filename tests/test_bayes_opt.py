@@ -11,9 +11,19 @@ from audio_benchmark.bayes_opt import (
     get_default_regressor_param_space,
 )
 from audio_benchmark.benchmark import AudioBenchmark
-from audio_benchmark.classifiers import KNNBenchmarkClassifier, create_classifier
+from audio_benchmark.classifiers import (
+    KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
+    MLPBenchmarkClassifier,
+    TransformerBenchmarkClassifier,
+)
 from audio_benchmark.dummy import DummyAudioDataset, DummyAudioModel
-from audio_benchmark.regressors import LinearBenchmarkRegressor, create_regressor
+from audio_benchmark.regressors import (
+    KNNBenchmarkRegressor,
+    LinearBenchmarkRegressor,
+    MLPBenchmarkRegressor,
+    TransformerBenchmarkRegressor,
+)
 from audio_benchmark.tasks.global_classification import GlobalClassificationTask
 from audio_benchmark.tasks.regression import RegressionTask
 
@@ -87,21 +97,44 @@ def test_sample_param_discrete_and_continuous():
 
 
 def test_default_search_spaces():
-    for name in ("linear", "knn", "mlp", "transformer"):
-        space_clf = get_default_classifier_param_space(name)
+    for model in (
+        LinearBenchmarkClassifier(),
+        KNNBenchmarkClassifier(),
+        MLPBenchmarkClassifier(),
+        TransformerBenchmarkClassifier(),
+    ):
+        space_clf = get_default_classifier_param_space(model)
         assert isinstance(space_clf, dict)
         assert len(space_clf) > 0
 
-        space_reg = get_default_regressor_param_space(name)
+    for model in (
+        LinearBenchmarkRegressor(),
+        KNNBenchmarkRegressor(),
+        MLPBenchmarkRegressor(),
+        TransformerBenchmarkRegressor(),
+    ):
+        space_reg = get_default_regressor_param_space(model)
         assert isinstance(space_reg, dict)
         assert len(space_reg) > 0
+
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        get_default_classifier_param_space("knn")
+
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        get_default_regressor_param_space("linear")
+
+    with pytest.raises(TypeError, match="cannot be None"):
+        get_default_classifier_param_space(None)
+
+    with pytest.raises(TypeError, match="cannot be None"):
+        get_default_regressor_param_space(None)
 
 
 def test_bayes_opt_classifier_knn(synthetic_classification_data):
     X_train, y_train, X_test, y_test = synthetic_classification_data
 
     clf = BayesOptClassifier(
-        base_model="knn",
+        base_model=KNNBenchmarkClassifier(),
         n_trials=5,
         cv=2,
         random_state=42,
@@ -132,7 +165,7 @@ def test_bayes_opt_classifier_custom_param_space(synthetic_classification_data):
         "metric": ["minkowski"],
     }
     clf = BayesOptClassifier(
-        base_model="knn",
+        base_model=KNNBenchmarkClassifier(),
         param_space=custom_space,
         n_trials=4,
         cv=2,
@@ -157,7 +190,7 @@ def test_bayes_opt_classifier_callable_space(synthetic_classification_data):
         }
 
     clf = BayesOptClassifier(
-        base_model="knn",
+        base_model=KNNBenchmarkClassifier(),
         param_space=custom_sampler,
         n_trials=3,
         cv=2,
@@ -170,23 +203,20 @@ def test_bayes_opt_classifier_callable_space(synthetic_classification_data):
     assert 0.0 <= metrics["accuracy"] <= 1.0
 
 
-def test_bayes_opt_classifier_via_factory():
-    clf = create_classifier(
-        "bayes_opt",
-        base_model="knn",
-        n_trials=3,
-        cv=2,
-        show_progress=False,
-    )
-    assert isinstance(clf, BayesOptClassifier)
-    assert clf.model_name == "knn"
+def test_bayes_opt_classifier_string_rejected():
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        BayesOptClassifier(base_model="knn")
+    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+        BayesOptClassifier(base_model=None)
+    with pytest.raises(TypeError):
+        BayesOptClassifier()
 
 
 def test_bayes_opt_regressor_linear(synthetic_regression_data):
     X_train, y_train, X_test, y_test = synthetic_regression_data
 
     reg = BayesOptRegressor(
-        base_model="linear",
+        base_model=LinearBenchmarkRegressor(),
         n_trials=5,
         cv=2,
         metric="r2",
@@ -213,7 +243,7 @@ def test_bayes_opt_regressor_minimize_metric(synthetic_regression_data):
     X_train, y_train, X_test, y_test = synthetic_regression_data
 
     reg = BayesOptRegressor(
-        base_model="linear",
+        base_model=LinearBenchmarkRegressor(),
         n_trials=4,
         cv=2,
         metric="mse",
@@ -226,16 +256,13 @@ def test_bayes_opt_regressor_minimize_metric(synthetic_regression_data):
     assert "mse" in metrics
 
 
-def test_bayes_opt_regressor_via_factory():
-    reg = create_regressor(
-        "bayes_opt",
-        base_model="knn",
-        n_trials=3,
-        cv=2,
-        show_progress=False,
-    )
-    assert isinstance(reg, BayesOptRegressor)
-    assert reg.model_name == "knn"
+def test_bayes_opt_regressor_string_rejected():
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        BayesOptRegressor(base_model="linear")
+    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+        BayesOptRegressor(base_model=None)
+    with pytest.raises(TypeError):
+        BayesOptRegressor()
 
 
 def test_bayes_opt_in_task_and_benchmark(tmp_path):
@@ -244,7 +271,7 @@ def test_bayes_opt_in_task_and_benchmark(tmp_path):
     model = DummyAudioModel(representation_dim=8)
 
     opt_classifier = BayesOptClassifier(
-        base_model="knn",
+        base_model=KNNBenchmarkClassifier(),
         param_space={"n_neighbors": [1, 3]},
         n_trials=3,
         cv=2,
@@ -282,7 +309,7 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
     model = DummyAudioModel(representation_dim=8)
 
     opt_regressor = BayesOptRegressor(
-        base_model="linear",
+        base_model=LinearBenchmarkRegressor(),
         param_space={"alpha": [0.1, 1.0, 10.0]},
         n_trials=3,
         cv=2,
@@ -307,9 +334,13 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
     result.print_summary()
 
 
-def test_bayes_opt_disallowed_aliases():
-    for alias in ("bayesopt", "bayesian_optimization", "bayes_optimization"):
-        with pytest.raises(ValueError, match="Unsupported classifier type"):
-            create_classifier(alias)
-        with pytest.raises(ValueError, match="Unsupported regressor type"):
-            create_regressor(alias)
+def test_bayes_opt_string_disallowed():
+    for alias in ("bayes_opt", "bayesopt", "bayesian_optimization", "knn", "linear"):
+        with pytest.raises(
+            TypeError, match="Passing strings as models is not supported"
+        ):
+            BayesOptClassifier(base_model=alias)
+        with pytest.raises(
+            TypeError, match="Passing strings as models is not supported"
+        ):
+            BayesOptRegressor(base_model=alias)

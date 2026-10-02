@@ -11,6 +11,7 @@ from audio_benchmark import (
     DummyAudioDataset,
     DummyAudioModel,
     FrameClassificationTask,
+    KNNBenchmarkClassifier,
     PhonemeWrapper,
     SequenceModelingTask,
     VoiceActivityWrapper,
@@ -256,7 +257,7 @@ def test_wrapper_chaining_and_task_execution():
     benchmark = AudioBenchmark(cache_dir=".test_wrapper_cache", enable_cache=False)
 
     vad_task = FrameClassificationTask(
-        classifier="knn", label_key="frame_labels", test_size=0.3
+        classifier=KNNBenchmarkClassifier(), label_key="frame_labels", test_size=0.3
     )
     vad_res = benchmark.run(
         model=model,

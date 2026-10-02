@@ -539,37 +539,3 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         with torch.inference_mode():
             preds = self.model(X_t).cpu().numpy()
         return preds * self.y_std + self.y_mean
-
-
-def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegressor:
-    """Factory to create a downstream regressor by name or return an existing instance.
-
-    Supported types: 'linear', 'knn', 'mlp', 'transformer', 'bayes_opt'.
-
-    Args:
-        regressor_type: Regressor identifier name or an existing BaseRegressor instance.
-        **kwargs: Hyperparameters forwarded to the regressor constructor.
-
-    Returns:
-        BaseRegressor: Instantiated downstream regressor.
-    """
-    if isinstance(regressor_type, BaseRegressor):
-        return regressor_type
-
-    normalized = str(regressor_type).lower().strip()
-    if normalized == "linear":
-        return LinearBenchmarkRegressor(**kwargs)
-    elif normalized == "knn":
-        return KNNBenchmarkRegressor(**kwargs)
-    elif normalized == "mlp":
-        return MLPBenchmarkRegressor(**kwargs)
-    elif normalized == "transformer":
-        return TransformerBenchmarkRegressor(**kwargs)
-    elif normalized == "bayes_opt":
-        from audio_benchmark.bayes_opt import BayesOptRegressor
-
-        return BayesOptRegressor(**kwargs)
-    else:
-        raise ValueError(
-            f"Unsupported regressor type: '{regressor_type}'. Available options: 'linear', 'knn', 'mlp', 'transformer', 'bayes_opt'."
-        )

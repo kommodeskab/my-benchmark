@@ -3,6 +3,7 @@
 import pytest
 
 from audio_benchmark.benchmark import AudioBenchmark
+from audio_benchmark.classifiers import KNNBenchmarkClassifier, MLPBenchmarkClassifier
 from audio_benchmark.dummy import DummyAudioDataset, DummyAudioModel
 from audio_benchmark.tasks.global_classification import GlobalClassificationTask
 
@@ -12,7 +13,7 @@ def test_benchmark_end_to_end_dummy(tmp_path):
     # Tiny dataset and short audio length for near-instant execution
     dataset = DummyAudioDataset(num_samples=12, audio_length=320, num_classes=3)
     model = DummyAudioModel(representation_dim=16)
-    task = GlobalClassificationTask(classifier="knn")
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
 
     # 1. First run: should compute and cache representations
     result1 = benchmark.run(
@@ -77,9 +78,8 @@ def test_benchmark_with_custom_task_instance(tmp_path):
     model = DummyAudioModel(representation_dim=16)
 
     task = GlobalClassificationTask(
-        classifier="mlp",
+        classifier=MLPBenchmarkClassifier(epochs=1, device="cpu"),
         test_size=0.3,
-        classifier_kwargs={"epochs": 1, "device": "cpu"},
     )
 
     result = benchmark.run(
@@ -91,5 +91,5 @@ def test_benchmark_with_custom_task_instance(tmp_path):
         device="cpu",
     )
 
-    assert result.metrics["classifier"] == "mlp"
+    assert result.metrics["classifier"] == "MLPBenchmarkClassifier"
     assert "accuracy" in result.metrics

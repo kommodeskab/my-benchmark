@@ -12,7 +12,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
 
-from audio_benchmark.classifiers.models import BaseClassifier, create_classifier
+from audio_benchmark.classifiers.models import BaseClassifier
 from audio_benchmark.dataset import validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.base import BaseTask
@@ -23,34 +23,31 @@ class GlobalClassificationTask(BaseTask):
 
     The label is extracted from the metadata dictionary of each sample.
     The sequence representations (N, T', C') are pooled over time to produce
-    clip-level features (N, C'), which are then classified using Linear, KNN, MLP, or Transformer.
+    clip-level features (N, C'), which are then classified using an instantiated BaseClassifier.
     """
 
     def __init__(
         self,
+        classifier: BaseClassifier,
         name: str = "global_classification",
         label_key: str = "label",
-        classifier: str | BaseClassifier = "knn",
         pooling: str | Callable[[torch.Tensor], torch.Tensor] = "mean",
         test_size: float = 0.2,
         random_state: int = 42,
         split_key: str | None = None,
-        classifier_kwargs: dict[str, Any] | None = None,
         metric: str = "accuracy",
     ):
         """Initialize the GlobalClassificationTask.
 
         Args:
+            classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
             label_key: Key in the sample metadata dictionary containing the target label.
-            classifier: Downstream classifier model. Can be 'linear', 'knn', 'mlp', 'transformer',
-                or an instance of BaseClassifier.
             pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last',
                 or a callable f(representations) -> pooled_tensor.
             test_size: Proportion of samples to use for test split if split_key is not used.
             random_state: Random seed for train/test split.
             split_key: Optional metadata key (e.g. 'split') specifying 'train' or 'test'.
-            classifier_kwargs: Optional kwargs to pass when instantiating the classifier.
             metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
         """
         super().__init__(name=name)
@@ -61,12 +58,25 @@ class GlobalClassificationTask(BaseTask):
             )
         self.metric = metric
         self.label_key = label_key
-        self.classifier_arg = classifier
+        if classifier is None:
+            raise TypeError(
+                "classifier must be an instantiated BaseClassifier instance, got None. "
+                "Passing None as a model is not allowed."
+            )
+        elif isinstance(classifier, str):
+            raise TypeError(
+                f"Passing strings as models is not supported (got '{classifier}'). "
+                "Please pass an instantiated BaseClassifier instance."
+            )
+        elif not isinstance(classifier, BaseClassifier):
+            raise TypeError(
+                f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
+            )
+        self.classifier = classifier
         self.pooling = pooling
         self.test_size = test_size
         self.random_state = random_state
         self.split_key = split_key
-        self.classifier_kwargs = classifier_kwargs or {}
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that the dataset metadata contains the expected label_key."""
@@ -117,15 +127,9 @@ class GlobalClassificationTask(BaseTask):
                 f"Global classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        # Instantiate classifier early to check if it accepts unpooled sequences
-        classifier_inst = create_classifier(
-            self.classifier_arg, **self.classifier_kwargs
-        )
-        classifier_name = (
-            self.classifier_arg
-            if isinstance(self.classifier_arg, str)
-            else classifier_inst.__class__.__name__
-        )
+        # Classifier instance
+        classifier_inst = self.classifier
+        classifier_name = classifier_inst.__class__.__name__
 
         is_sequence_probe = getattr(classifier_inst, "accepts_sequence", False)
         if is_sequence_probe:
@@ -180,7 +184,7 @@ class GlobalClassificationTask(BaseTask):
 
         results = {
             "task": self.name,
-            "classifier": str(classifier_name).lower(),
+            "classifier": classifier_name,
             "pooling": pooling_name,
             "value": float(metrics[self.metric]),
             "accuracy": metrics["accuracy"],

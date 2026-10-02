@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
 
-from audio_benchmark.classifiers.models import BaseClassifier, create_classifier
+from audio_benchmark.classifiers.models import BaseClassifier
 from audio_benchmark.dataset import parse_dataset_item, validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.base import BaseTask
@@ -29,25 +29,23 @@ class FrameClassificationTask(BaseTask):
 
     def __init__(
         self,
+        classifier: BaseClassifier,
         name: str = "frame_classification",
         label_key: str = "frame_labels",
-        classifier: str | BaseClassifier = "knn",
         test_size: float = 0.2,
         random_state: int = 42,
         split_key: str | None = None,
-        classifier_kwargs: dict[str, Any] | None = None,
         metric: str = "accuracy",
     ):
         """Initialize the FrameClassificationTask.
 
         Args:
+            classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
             label_key: Metadata key containing the per-frame label sequence (length T).
-            classifier: Downstream classifier ('linear', 'knn', 'mlp', or BaseClassifier instance).
             test_size: Proportion of audio clips for testing.
             random_state: Random seed for train/test split.
             split_key: Optional metadata key ('train'/'test') for pre-defined splits.
-            classifier_kwargs: Kwargs passed to the classifier.
             metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
         """
         super().__init__(name=name)
@@ -58,11 +56,24 @@ class FrameClassificationTask(BaseTask):
             )
         self.metric = metric
         self.label_key = label_key
-        self.classifier_arg = classifier
+        if classifier is None:
+            raise TypeError(
+                "classifier must be an instantiated BaseClassifier instance, got None. "
+                "Passing None as a model is not allowed."
+            )
+        elif isinstance(classifier, str):
+            raise TypeError(
+                f"Passing strings as models is not supported (got '{classifier}'). "
+                "Please pass an instantiated BaseClassifier instance."
+            )
+        elif not isinstance(classifier, BaseClassifier):
+            raise TypeError(
+                f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
+            )
+        self.classifier = classifier
         self.test_size = test_size
         self.random_state = random_state
         self.split_key = split_key
-        self.classifier_kwargs = classifier_kwargs or {}
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that dataset metadata contains per-frame labels matching audio length T."""
@@ -160,15 +171,9 @@ class FrameClassificationTask(BaseTask):
         X_test = features_np[test_clips].reshape(-1, feature_dim)
         y_test = encoded_per_clip[test_clips].reshape(-1)
 
-        # Instantiate classifier
-        classifier_inst = create_classifier(
-            self.classifier_arg, **self.classifier_kwargs
-        )
-        classifier_name = (
-            self.classifier_arg
-            if isinstance(self.classifier_arg, str)
-            else classifier_inst.__class__.__name__
-        )
+        # Classifier instance
+        classifier_inst = self.classifier
+        classifier_name = classifier_inst.__class__.__name__
 
         # Fit classifier with timing
         start_time = time.perf_counter()
@@ -181,7 +186,7 @@ class FrameClassificationTask(BaseTask):
 
         results = {
             "task": self.name,
-            "classifier": str(classifier_name).lower(),
+            "classifier": classifier_name,
             "value": float(metrics[self.metric]),
             "accuracy": metrics["accuracy"],
             "macro_f1": metrics["macro_f1"],

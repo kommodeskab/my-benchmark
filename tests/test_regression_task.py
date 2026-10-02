@@ -3,19 +3,30 @@
 import pytest
 import torch
 
-from audio_benchmark import AudioBenchmark, DummyAudioDataset, DummyAudioModel
+from audio_benchmark import (
+    AudioBenchmark,
+    DummyAudioDataset,
+    DummyAudioModel,
+    KNNBenchmarkRegressor,
+    LinearBenchmarkRegressor,
+    MLPBenchmarkRegressor,
+    TransformerBenchmarkRegressor,
+)
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.regression import RegressionTask
 
 
 def test_regression_task_with_different_regressors():
-    task_linear = RegressionTask(regressor="linear", test_size=0.25, random_state=42)
-    task_knn = RegressionTask(regressor="knn", test_size=0.25, random_state=42)
+    task_linear = RegressionTask(
+        regressor=LinearBenchmarkRegressor(), test_size=0.25, random_state=42
+    )
+    task_knn = RegressionTask(
+        regressor=KNNBenchmarkRegressor(), test_size=0.25, random_state=42
+    )
     task_mlp = RegressionTask(
-        regressor="mlp",
+        regressor=MLPBenchmarkRegressor(epochs=1, device="cpu"),
         test_size=0.25,
         random_state=42,
-        regressor_kwargs={"epochs": 1, "device": "cpu"},
     )
 
     reps = torch.randn(20, 4, 16)
@@ -47,24 +58,23 @@ def test_regression_task_with_different_regressors():
 
 def test_regression_task_with_transformer():
     task_tf = RegressionTask(
-        regressor="transformer",
+        regressor=TransformerBenchmarkRegressor(
+            d_model=16,
+            nhead=2,
+            num_layers=1,
+            dim_feedforward=32,
+            epochs=1,
+            device="cpu",
+        ),
         test_size=0.25,
         random_state=42,
-        regressor_kwargs={
-            "d_model": 16,
-            "nhead": 2,
-            "num_layers": 1,
-            "dim_feedforward": 32,
-            "epochs": 1,
-            "device": "cpu",
-        },
     )
 
     reps = torch.randn(20, 4, 16)
     meta = [{"target": float(i * 1.5 + 2.0)} for i in range(20)]
 
     res = task_tf.evaluate(reps, meta)
-    assert res["regressor"] == "transformer"
+    assert res["regressor"] == "TransformerBenchmarkRegressor"
     assert res["pooling"] == "none (transformer)"
     assert "train_samples" not in res
     assert "mse" in res
@@ -77,7 +87,7 @@ def test_regression_task_pooling_modes():
     meta = [{"target": float(i)} for i in range(12)]
 
     for pool in ["mean", "max", "first", "last"]:
-        task = RegressionTask(regressor="linear", pooling=pool)
+        task = RegressionTask(regressor=LinearBenchmarkRegressor(), pooling=pool)
         res = task.evaluate(reps, meta)
         assert res["pooling"] == pool
         assert "mse" in res
@@ -90,7 +100,7 @@ def test_regression_task_with_split_key():
         split = "train" if i < 10 else "test"
         meta.append({"target": float(i * 0.5), "split": split})
 
-    task = RegressionTask(regressor="linear", split_key="split")
+    task = RegressionTask(regressor=LinearBenchmarkRegressor(), split_key="split")
     info = task.examine_data(meta)
     assert info["train_samples"] == 10
     assert info["test_samples"] == 5
@@ -100,7 +110,7 @@ def test_regression_task_with_split_key():
 
 
 def test_regression_task_missing_target_raises():
-    task = RegressionTask(target_key="pitch")
+    task = RegressionTask(regressor=LinearBenchmarkRegressor(), target_key="pitch")
     reps = torch.randn(6, 4, 8)
     meta = [{"wrong_target": 1.0} for _ in range(6)]
 
@@ -109,7 +119,7 @@ def test_regression_task_missing_target_raises():
 
 
 def test_regression_task_invalid_target_value_raises():
-    task = RegressionTask(target_key="target")
+    task = RegressionTask(regressor=LinearBenchmarkRegressor(), target_key="target")
     reps = torch.randn(6, 4, 8)
     meta = [{"target": "not_a_number"} for _ in range(6)]
 
@@ -121,7 +131,7 @@ def test_benchmark_runner_with_regression_task(tmp_path):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
     dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
-    task = RegressionTask(regressor="linear")
+    task = RegressionTask(regressor=LinearBenchmarkRegressor())
 
     result = benchmark.run(
         model=model,
@@ -135,4 +145,16 @@ def test_benchmark_runner_with_regression_task(tmp_path):
     assert result.task_name == "regression"
     assert "mse" in result.metrics
     assert "r2" in result.metrics
-    assert result.metrics["regressor"] == "linear"
+    assert result.metrics["regressor"] == "LinearBenchmarkRegressor"
+
+
+def test_regression_task_string_regressor_raises():
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        RegressionTask(regressor="linear")
+
+
+def test_regression_task_none_or_missing_regressor_raises():
+    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+        RegressionTask(regressor=None)
+    with pytest.raises(TypeError):
+        RegressionTask()

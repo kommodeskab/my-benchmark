@@ -9,7 +9,6 @@ from audio_benchmark.classifiers import (
     LinearBenchmarkClassifier,
     MLPBenchmarkClassifier,
     TransformerBenchmarkClassifier,
-    create_classifier,
 )
 from audio_benchmark.dataset import (
     get_dataset_name,
@@ -31,7 +30,6 @@ from audio_benchmark.regressors import (
     LinearBenchmarkRegressor,
     MLPBenchmarkRegressor,
     TransformerBenchmarkRegressor,
-    create_regressor,
 )
 from audio_benchmark.tasks import (
     BaseTask,
@@ -86,8 +84,6 @@ __all__ = [
     "VoiceActivityWrapper",
     "WhisperTranscriptionWrapper",
     "compute_token_error_rate",
-    "create_classifier",
-    "create_regressor",
     "downsample_sequence",
     "extract_representations",
     "get_dataset_name",

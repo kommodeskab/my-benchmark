@@ -8,7 +8,6 @@ from audio_benchmark.regressors import (
     LinearBenchmarkRegressor,
     MLPBenchmarkRegressor,
     TransformerBenchmarkRegressor,
-    create_regressor,
 )
 
 
@@ -99,40 +98,3 @@ def test_transformer_regressor():
     )
     reg_mean.fit(X[:8], y[:8])
     assert len(reg_mean.predict(X[8:])) == 2
-
-
-def test_create_regressor_factory():
-    linear = create_regressor("linear")
-    assert isinstance(linear, LinearBenchmarkRegressor)
-
-    knn = create_regressor("knn")
-    assert isinstance(knn, KNNBenchmarkRegressor)
-
-    mlp = create_regressor("mlp")
-    assert isinstance(mlp, MLPBenchmarkRegressor)
-
-    tf = create_regressor("transformer")
-    assert isinstance(tf, TransformerBenchmarkRegressor)
-
-    bayes_opt = create_regressor("bayes_opt")
-    from audio_benchmark.bayes_opt import BayesOptRegressor
-
-    assert isinstance(bayes_opt, BayesOptRegressor)
-
-    same_knn = create_regressor(knn)
-    assert same_knn is knn
-
-    with pytest.raises(ValueError, match="Unsupported regressor type"):
-        create_regressor("unsupported_regressor")
-
-    for alias in (
-        "ridge",
-        "linear_regression",
-        "k_nearest_neighbors",
-        "multilayer_perceptron",
-        "transformer_encoder",
-        "bayesopt",
-        "bayesian_optimization",
-    ):
-        with pytest.raises(ValueError, match="Unsupported regressor type"):
-            create_regressor(alias)

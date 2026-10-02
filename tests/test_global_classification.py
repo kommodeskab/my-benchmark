@@ -3,22 +3,27 @@
 import pytest
 import torch
 
+from audio_benchmark.classifiers import (
+    KNNBenchmarkClassifier,
+    LinearBenchmarkClassifier,
+    MLPBenchmarkClassifier,
+    TransformerBenchmarkClassifier,
+)
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.global_classification import GlobalClassificationTask
 
 
 def test_global_classification_with_different_classifiers():
     task_linear = GlobalClassificationTask(
-        classifier="linear", test_size=0.25, random_state=42
+        classifier=LinearBenchmarkClassifier(), test_size=0.25, random_state=42
     )
     task_knn = GlobalClassificationTask(
-        classifier="knn", test_size=0.25, random_state=42
+        classifier=KNNBenchmarkClassifier(), test_size=0.25, random_state=42
     )
     task_mlp = GlobalClassificationTask(
-        classifier="mlp",
+        classifier=MLPBenchmarkClassifier(epochs=1, device="cpu"),
         test_size=0.25,
         random_state=42,
-        classifier_kwargs={"epochs": 1, "device": "cpu"},
     )
 
     reps = torch.randn(16, 4, 16)
@@ -50,24 +55,23 @@ def test_global_classification_with_different_classifiers():
 
 def test_global_classification_with_transformer():
     task_tf = GlobalClassificationTask(
-        classifier="transformer",
+        classifier=TransformerBenchmarkClassifier(
+            d_model=16,
+            nhead=2,
+            num_layers=1,
+            dim_feedforward=32,
+            epochs=1,
+            device="cpu",
+        ),
         test_size=0.25,
         random_state=42,
-        classifier_kwargs={
-            "d_model": 16,
-            "nhead": 2,
-            "num_layers": 1,
-            "dim_feedforward": 32,
-            "epochs": 1,
-            "device": "cpu",
-        },
     )
 
     reps = torch.randn(16, 4, 16)
     meta = [{"label": f"cls_{i % 2}"} for i in range(16)]
 
     res = task_tf.evaluate(reps, meta)
-    assert res["classifier"] == "transformer"
+    assert res["classifier"] == "TransformerBenchmarkClassifier"
     assert res["pooling"] == "none (transformer)"
     assert "train_samples" not in res
     assert 0.0 <= res["accuracy"] <= 1.0
@@ -80,7 +84,9 @@ def test_global_classification_pooling_modes():
     meta = [{"label": i % 2} for i in range(12)]
 
     for pool in ["mean", "max", "first", "last"]:
-        task = GlobalClassificationTask(classifier="knn", pooling=pool)
+        task = GlobalClassificationTask(
+            classifier=KNNBenchmarkClassifier(), pooling=pool
+        )
         res = task.evaluate(reps, meta)
         assert res["pooling"] == pool
         assert 0.0 <= res["accuracy"] <= 1.0
@@ -93,7 +99,9 @@ def test_global_classification_with_split_key():
         split = "train" if i < 10 else "test"
         meta.append({"label": i % 2, "split": split})
 
-    task = GlobalClassificationTask(classifier="knn", split_key="split")
+    task = GlobalClassificationTask(
+        classifier=KNNBenchmarkClassifier(), split_key="split"
+    )
     info = task.examine_data(meta)
     assert info["train_samples"] == 10
     assert info["test_samples"] == 5
@@ -104,7 +112,9 @@ def test_global_classification_with_split_key():
 
 
 def test_global_classification_missing_label_raises():
-    task = GlobalClassificationTask(label_key="target_label")
+    task = GlobalClassificationTask(
+        classifier=KNNBenchmarkClassifier(), label_key="target_label"
+    )
     reps = torch.randn(6, 4, 8)
     meta = [{"wrong_key": 1} for _ in range(6)]
 
@@ -113,9 +123,21 @@ def test_global_classification_missing_label_raises():
 
 
 def test_global_classification_single_class_raises():
-    task = GlobalClassificationTask()
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
     reps = torch.randn(6, 4, 8)
     meta = [{"label": 0} for _ in range(6)]
 
     with pytest.raises(TaskError, match="requires at least 2 distinct classes"):
         task.evaluate(reps, meta)
+
+
+def test_global_classification_string_classifier_raises():
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        GlobalClassificationTask(classifier="knn")
+
+
+def test_global_classification_none_or_missing_classifier_raises():
+    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+        GlobalClassificationTask(classifier=None)
+    with pytest.raises(TypeError):
+        GlobalClassificationTask()

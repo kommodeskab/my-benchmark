@@ -4,7 +4,6 @@ from audio_benchmark.classifiers.models import (
     LinearBenchmarkClassifier,
     MLPBenchmarkClassifier,
     TransformerBenchmarkClassifier,
-    create_classifier,
 )
 
 __all__ = [
@@ -14,7 +13,6 @@ __all__ = [
     "LinearBenchmarkClassifier",
     "MLPBenchmarkClassifier",
     "TransformerBenchmarkClassifier",
-    "create_classifier",
 ]
 
 

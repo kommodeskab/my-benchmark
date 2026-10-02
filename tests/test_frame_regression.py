@@ -4,7 +4,14 @@ import pytest
 import torch
 from torch.utils.data import Dataset
 
-from audio_benchmark import AudioBenchmark, DummyAudioDataset, DummyAudioModel
+from audio_benchmark import (
+    AudioBenchmark,
+    DummyAudioDataset,
+    DummyAudioModel,
+    KNNBenchmarkRegressor,
+    LinearBenchmarkRegressor,
+    MLPBenchmarkRegressor,
+)
 from audio_benchmark.exceptions import InvalidDatasetError
 from audio_benchmark.tasks.frame_regression import FrameRegressionTask
 
@@ -23,14 +30,15 @@ class MismatchedFrameRegDataset(Dataset):
 
 def test_frame_regression_with_regressors():
     task_linear = FrameRegressionTask(
-        regressor="linear", test_size=0.25, random_state=42
+        regressor=LinearBenchmarkRegressor(), test_size=0.25, random_state=42
     )
-    task_knn = FrameRegressionTask(regressor="knn", test_size=0.25, random_state=42)
+    task_knn = FrameRegressionTask(
+        regressor=KNNBenchmarkRegressor(), test_size=0.25, random_state=42
+    )
     task_mlp = FrameRegressionTask(
-        regressor="mlp",
+        regressor=MLPBenchmarkRegressor(epochs=1, device="cpu"),
         test_size=0.25,
         random_state=42,
-        regressor_kwargs={"epochs": 1, "device": "cpu"},
     )
 
     reps = torch.randn(8, 4, 8)
@@ -64,7 +72,9 @@ def test_frame_regression_with_regressors():
 
 
 def test_frame_regression_dataset_validation():
-    task = FrameRegressionTask(target_key="frame_targets")
+    task = FrameRegressionTask(
+        regressor=LinearBenchmarkRegressor(), target_key="frame_targets"
+    )
     bad_ds = MismatchedFrameRegDataset()
 
     with pytest.raises(InvalidDatasetError, match="Length mismatch in 'frame_targets'"):
@@ -72,7 +82,7 @@ def test_frame_regression_dataset_validation():
 
 
 def test_frame_regression_with_split_key():
-    task = FrameRegressionTask(regressor="linear", split_key="split")
+    task = FrameRegressionTask(regressor=LinearBenchmarkRegressor(), split_key="split")
     reps = torch.randn(6, 3, 8)
     meta = []
     for i in range(6):
@@ -92,7 +102,7 @@ def test_benchmark_runner_with_frame_regression(tmp_path):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
     dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
-    task = FrameRegressionTask(regressor="linear")
+    task = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
 
     result = benchmark.run(
         model=model,
@@ -108,3 +118,15 @@ def test_benchmark_runner_with_frame_regression(tmp_path):
     assert "T_orig" not in result.metrics
     assert result.extra_info["frame_length"] == 320
     assert result.extra_info["train_clips"] == 6
+
+
+def test_frame_regression_string_regressor_raises():
+    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+        FrameRegressionTask(regressor="linear")
+
+
+def test_frame_regression_none_or_missing_regressor_raises():
+    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+        FrameRegressionTask(regressor=None)
+    with pytest.raises(TypeError):
+        FrameRegressionTask()

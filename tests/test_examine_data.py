@@ -11,6 +11,8 @@ from audio_benchmark import (
     FrameClassificationTask,
     FrameRegressionTask,
     GlobalClassificationTask,
+    KNNBenchmarkClassifier,
+    LinearBenchmarkRegressor,
     RegressionTask,
     SequenceModelingTask,
 )
@@ -60,7 +62,12 @@ def test_global_classification_examine_data():
     ]
     ds = SimpleAudioDataset(samples)
 
-    task = GlobalClassificationTask(test_size=0.3, random_state=42, metric="accuracy")
+    task = GlobalClassificationTask(
+        classifier=KNNBenchmarkClassifier(),
+        test_size=0.3,
+        random_state=42,
+        metric="accuracy",
+    )
     info = task.examine_data(ds)
 
     assert info["task"] == "global_classification"
@@ -82,7 +89,9 @@ def test_global_classification_examine_data_custom_metric():
     samples = [{"label": f"c_{i % 3}"} for i in range(12)]
     ds = SimpleAudioDataset(samples)
 
-    task = GlobalClassificationTask(metric="macro_f1")
+    task = GlobalClassificationTask(
+        classifier=KNNBenchmarkClassifier(), metric="macro_f1"
+    )
     info = task.examine_data(ds)
 
     assert info["baseline_metric"] == "macro_f1"
@@ -92,7 +101,7 @@ def test_global_classification_examine_data_custom_metric():
 
 
 def test_global_classification_examine_data_error_cases():
-    task = GlobalClassificationTask()
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
 
     # Single class dataset
     single_class_ds = SimpleAudioDataset([{"label": "a"} for _ in range(5)])
@@ -110,7 +119,12 @@ def test_regression_examine_data():
     samples = [{"target": t} for t in targets]
     ds = SimpleAudioDataset(samples)
 
-    task = RegressionTask(test_size=0.25, random_state=42, metric="r2")
+    task = RegressionTask(
+        regressor=LinearBenchmarkRegressor(),
+        test_size=0.25,
+        random_state=42,
+        metric="r2",
+    )
     info = task.examine_data(ds)
 
     assert info["task"] == "regression"
@@ -133,7 +147,7 @@ def test_regression_examine_data_custom_metric():
     samples = [{"target": float(i)} for i in range(10)]
     ds = SimpleAudioDataset(samples)
 
-    task = RegressionTask(metric="mse")
+    task = RegressionTask(regressor=LinearBenchmarkRegressor(), metric="mse")
     info = task.examine_data(ds)
 
     assert info["baseline_metric"] == "mse"
@@ -141,7 +155,7 @@ def test_regression_examine_data_custom_metric():
 
 
 def test_regression_examine_data_invalid_target():
-    task = RegressionTask()
+    task = RegressionTask(regressor=LinearBenchmarkRegressor())
     bad_ds = SimpleAudioDataset([{"target": "invalid_number"} for _ in range(5)])
     with pytest.raises(TaskError, match="cannot be converted to float"):
         task.examine_data(bad_ds)
@@ -154,7 +168,9 @@ def test_frame_classification_examine_data():
     ]
     ds = SimpleAudioDataset(samples, audio_length=16)
 
-    task = FrameClassificationTask(test_size=0.25, random_state=42)
+    task = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(), test_size=0.25, random_state=42
+    )
     info = task.examine_data(ds)
 
     assert info["task"] == "frame_classification"
@@ -178,7 +194,12 @@ def test_frame_regression_examine_data():
     ]
     ds = SimpleAudioDataset(samples, audio_length=10)
 
-    task = FrameRegressionTask(test_size=0.33, random_state=42, metric="mae")
+    task = FrameRegressionTask(
+        regressor=LinearBenchmarkRegressor(),
+        test_size=0.33,
+        random_state=42,
+        metric="mae",
+    )
     info = task.examine_data(ds)
 
     assert info["task"] == "frame_regression"
@@ -225,7 +246,7 @@ def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=False)
     dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=3)
     model = DummyAudioModel(representation_dim=16)
-    task = GlobalClassificationTask(classifier="knn")
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
 
     result = benchmark.run(
         model=model,

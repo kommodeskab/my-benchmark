@@ -4,7 +4,6 @@ from audio_benchmark.regressors.models import (
     LinearBenchmarkRegressor,
     MLPBenchmarkRegressor,
     TransformerBenchmarkRegressor,
-    create_regressor,
 )
 
 __all__ = [
@@ -14,7 +13,6 @@ __all__ = [
     "LinearBenchmarkRegressor",
     "MLPBenchmarkRegressor",
     "TransformerBenchmarkRegressor",
-    "create_regressor",
 ]
 
 

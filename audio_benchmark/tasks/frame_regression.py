@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 
 from audio_benchmark.dataset import parse_dataset_item, validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
-from audio_benchmark.regressors.models import BaseRegressor, create_regressor
+from audio_benchmark.regressors.models import BaseRegressor
 from audio_benchmark.tasks.base import BaseTask
 from audio_benchmark.tasks.downsampling import downsample_sequence
 
@@ -27,25 +27,23 @@ class FrameRegressionTask(BaseTask):
 
     def __init__(
         self,
+        regressor: BaseRegressor,
         name: str = "frame_regression",
         target_key: str = "frame_targets",
-        regressor: str | BaseRegressor = "linear",
         test_size: float = 0.2,
         random_state: int = 42,
         split_key: str | None = None,
-        regressor_kwargs: dict[str, Any] | None = None,
         metric: str = "r2",
     ):
         """Initialize the FrameRegressionTask.
 
         Args:
+            regressor: Downstream regressor instance conforming to BaseRegressor.
             name: Identifier for the task.
             target_key: Metadata key containing the per-frame target sequence (length T).
-            regressor: Downstream regressor ('linear', 'knn', or 'mlp').
             test_size: Proportion of audio clips for testing.
             random_state: Random seed for train/test split.
             split_key: Optional metadata key ('train'/'test') for pre-defined splits.
-            regressor_kwargs: Kwargs passed to the regressor.
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
         """
         super().__init__(name=name)
@@ -56,11 +54,24 @@ class FrameRegressionTask(BaseTask):
             )
         self.metric = metric
         self.target_key = target_key
-        self.regressor_arg = regressor
+        if regressor is None:
+            raise TypeError(
+                "regressor must be an instantiated BaseRegressor instance, got None. "
+                "Passing None as a model is not allowed."
+            )
+        elif isinstance(regressor, str):
+            raise TypeError(
+                f"Passing strings as models is not supported (got '{regressor}'). "
+                "Please pass an instantiated BaseRegressor instance."
+            )
+        elif not isinstance(regressor, BaseRegressor):
+            raise TypeError(
+                f"regressor must be an instantiated BaseRegressor instance, got {type(regressor).__name__}."
+            )
+        self.regressor = regressor
         self.test_size = test_size
         self.random_state = random_state
         self.split_key = split_key
-        self.regressor_kwargs = regressor_kwargs or {}
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that dataset metadata contains per-frame targets matching audio length T."""
@@ -149,13 +160,10 @@ class FrameRegressionTask(BaseTask):
         X_test = features_np[test_clips].reshape(-1, feature_dim)
         y_test = targets_per_clip[test_clips].reshape(-1)
 
-        # Fit regressor
-        regressor_inst = create_regressor(self.regressor_arg, **self.regressor_kwargs)
-        regressor_name = (
-            self.regressor_arg
-            if isinstance(self.regressor_arg, str)
-            else regressor_inst.__class__.__name__
-        )
+        # Regressor instance
+        regressor_inst = self.regressor
+        regressor_name = regressor_inst.__class__.__name__
+
         # Fit regressor with timing
         start_time = time.perf_counter()
         regressor_inst.fit(X_train, y_train)
@@ -167,7 +175,7 @@ class FrameRegressionTask(BaseTask):
 
         results = {
             "task": self.name,
-            "regressor": str(regressor_name).lower(),
+            "regressor": regressor_name,
             "value": float(metrics[self.metric]),
             "mse": metrics["mse"],
             "rmse": metrics["rmse"],
