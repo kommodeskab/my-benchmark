@@ -11,6 +11,11 @@ class BaseTask(ABC):
     """Abstract base class for benchmark tasks."""
 
     def __init__(self, name: str):
+        """Initialize base task.
+
+        Args:
+            name: Identifier for the task.
+        """
         self.name = name
 
     @abstractmethod
@@ -65,6 +70,10 @@ class BaseTask(ABC):
 
         If dataset is a full Dataset (with waveforms), delegates to self.validate_dataset.
         If dataset is a list/tuple of metadata dictionaries, validates the metadata format and keys.
+
+        Args:
+            dataset: PyTorch dataset or sequence of metadata dicts.
+            required_metadata_keys: Sequence of required metadata keys.
         """
         from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 

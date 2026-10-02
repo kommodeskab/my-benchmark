@@ -20,16 +20,39 @@ class BaseRegressor(ABC):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "BaseRegressor":
-        """Train the regressor on representation features X and continuous targets y."""
+        """Train the regressor on representation features X and continuous targets y.
+
+        Args:
+            X: Input feature representations of shape (N, C) or (N, T', C').
+            y: Target continuous values of shape (N,).
+
+        Returns:
+            BaseRegressor: Fitted regressor instance.
+        """
 
     @abstractmethod
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
-        """Predict continuous targets for features X."""
+        """Predict continuous targets for features X.
+
+        Args:
+            X: Input feature representations of shape (N, C) or (N, T', C').
+
+        Returns:
+            np.ndarray: Predicted continuous targets of shape (N,).
+        """
 
     def evaluate(
         self, X_test: np.ndarray | torch.Tensor, y_test: np.ndarray | torch.Tensor
     ) -> dict[str, float]:
-        """Evaluate predictions against ground truth targets."""
+        """Evaluate predictions against ground truth targets.
+
+        Args:
+            X_test: Test feature representations.
+            y_test: Ground truth continuous targets.
+
+        Returns:
+            dict[str, float]: Dictionary containing 'mse', 'rmse', 'mae', 'r2', and 'pearson_r'.
+        """
         y_test_np = to_numpy(y_test).ravel()
         y_pred = self.predict(X_test).ravel()
 
@@ -56,7 +79,12 @@ class BaseRegressor(ABC):
 
 
 class LinearBenchmarkRegressor(BaseRegressor):
-    """Linear / Ridge downstream regressor."""
+    """Linear / Ridge downstream regressor.
+
+    Args:
+        alpha: Regularization strength for Ridge regression (larger values specify stronger regularization).
+        **kwargs: Additional keyword arguments passed to scikit-learn Ridge.
+    """
 
     def __init__(self, alpha: float = 1.0, **kwargs):
         self.alpha = alpha
@@ -66,18 +94,41 @@ class LinearBenchmarkRegressor(BaseRegressor):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "LinearBenchmarkRegressor":
+        """Fit the linear regressor on features X and targets y.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+            y: Target continuous values of shape (N,).
+
+        Returns:
+            LinearBenchmarkRegressor: Fitted regressor instance.
+        """
         X_np = to_numpy(X)
         y_np = to_numpy(y).ravel()
         self.model.fit(X_np, y_np)
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict continuous targets for features X.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted continuous targets of shape (N,).
+        """
         X_np = to_numpy(X)
         return self.model.predict(X_np)
 
 
 class KNNBenchmarkRegressor(BaseRegressor):
-    """K-Nearest Neighbors downstream regressor."""
+    """K-Nearest Neighbors downstream regressor.
+
+    Args:
+        n_neighbors: Number of nearest neighbors to query.
+        metric: Distance metric to use for neighbor search (default: 'cosine').
+        **kwargs: Additional keyword arguments passed to KNeighborsRegressor.
+    """
 
     def __init__(self, n_neighbors: int = 5, metric: str = "cosine", **kwargs):
         self.n_neighbors = n_neighbors
@@ -90,6 +141,15 @@ class KNNBenchmarkRegressor(BaseRegressor):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "KNNBenchmarkRegressor":
+        """Fit the KNN regressor on features X and targets y.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+            y: Target continuous values of shape (N,).
+
+        Returns:
+            KNNBenchmarkRegressor: Fitted regressor instance.
+        """
         X_np = to_numpy(X)
         y_np = to_numpy(y).ravel()
         effective_k = min(self.n_neighbors, len(X_np))
@@ -101,12 +161,26 @@ class KNNBenchmarkRegressor(BaseRegressor):
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict continuous targets for features X.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted continuous targets of shape (N,).
+        """
         X_np = to_numpy(X)
         return self.model.predict(X_np)
 
 
 class _TorchMLPRegressor(nn.Module):
-    """Simple 2-layer MLP for regression."""
+    """Simple 2-layer MLP for regression.
+
+    Args:
+        in_dim: Input feature dimension.
+        hidden_dim: Number of hidden units.
+        dropout: Dropout rate applied after the hidden layer.
+    """
 
     def __init__(self, in_dim: int, hidden_dim: int = 128, dropout: float = 0.1):
         super().__init__()
@@ -118,11 +192,29 @@ class _TorchMLPRegressor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            x: Input tensor of shape (B, in_dim).
+
+        Returns:
+            torch.Tensor: Predicted continuous values of shape (B,).
+        """
         return self.net(x).squeeze(-1)
 
 
 class MLPBenchmarkRegressor(BaseRegressor):
-    """Multi-Layer Perceptron downstream regressor."""
+    """Multi-Layer Perceptron downstream regressor.
+
+    Args:
+        hidden_dim: Number of units in the hidden layer.
+        dropout: Dropout probability applied after the hidden layer.
+        lr: Learning rate for Adam optimizer.
+        epochs: Number of training epochs.
+        batch_size: Batch size for training DataLoader.
+        weight_decay: L2 penalty for Adam optimizer.
+        device: Device to use for training and inference ('auto', 'cpu', 'cuda').
+    """
 
     def __init__(
         self,
@@ -148,6 +240,15 @@ class MLPBenchmarkRegressor(BaseRegressor):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "MLPBenchmarkRegressor":
+        """Train the MLP regressor on features X and targets y.
+
+        Args:
+            X: Input feature representations of shape (N, C).
+            y: Target continuous values of shape (N,).
+
+        Returns:
+            MLPBenchmarkRegressor: Fitted regressor instance.
+        """
         X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
         y_t = torch.as_tensor(to_numpy(y), dtype=torch.float32).ravel()
 
@@ -185,6 +286,14 @@ class MLPBenchmarkRegressor(BaseRegressor):
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict continuous targets for features X.
+
+        Args:
+            X: Input feature representations of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted continuous targets of shape (N,).
+        """
         if self.model is None:
             raise RuntimeError("Regressor has not been fitted yet.")
 
@@ -196,7 +305,17 @@ class MLPBenchmarkRegressor(BaseRegressor):
 
 
 class _TorchTransformerRegressor(nn.Module):
-    """Non-causal Transformer Encoder regressor."""
+    """Non-causal Transformer Encoder regressor.
+
+    Args:
+        in_dim: Input representation feature dimension per frame.
+        d_model: Embedding dimension of the transformer encoder.
+        nhead: Number of attention heads in multi-head attention.
+        num_layers: Number of transformer encoder layers.
+        dim_feedforward: Dimension of the feedforward network model.
+        dropout: Dropout probability.
+        aggregation: Aggregation strategy over time ('cls' token or 'mean' pooling).
+    """
 
     def __init__(
         self,
@@ -234,6 +353,14 @@ class _TorchTransformerRegressor(nn.Module):
         self.head = nn.Linear(d_model, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            x: Input sequence tensor of shape (B, T, in_dim).
+
+        Returns:
+            torch.Tensor: Predicted continuous values of shape (B,).
+        """
         # x is (B, T, in_dim)
         h = self.proj(x)
         if self.aggregation == "cls":
@@ -250,6 +377,19 @@ class TransformerBenchmarkRegressor(BaseRegressor):
 
     Attends bidirectional across all features in the representation sequence
     without pooling before the transformer.
+
+    Args:
+        d_model: Transformer hidden dimension (must be divisible by nhead).
+        nhead: Number of parallel attention heads.
+        num_layers: Number of transformer encoder layers.
+        dim_feedforward: Dimension of the feedforward network layer.
+        dropout: Dropout probability.
+        aggregation: Sequence pooling method ('cls' or 'mean').
+        lr: Learning rate for Adam optimizer.
+        epochs: Number of training epochs.
+        batch_size: Batch size for training DataLoader.
+        weight_decay: L2 penalty for Adam optimizer.
+        device: Device to use for training and inference ('auto', 'cpu', 'cuda').
     """
 
     accepts_sequence: bool = True
@@ -296,6 +436,15 @@ class TransformerBenchmarkRegressor(BaseRegressor):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "TransformerBenchmarkRegressor":
+        """Train the transformer regressor on representation sequences X and targets y.
+
+        Args:
+            X: Input sequence representations of shape (N, T', C') or (N, C').
+            y: Target continuous values of shape (N,).
+
+        Returns:
+            TransformerBenchmarkRegressor: Fitted regressor instance.
+        """
         X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
@@ -339,6 +488,14 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict continuous targets for representations X.
+
+        Args:
+            X: Input sequence representations of shape (N, T', C') or (N, C').
+
+        Returns:
+            np.ndarray: Predicted continuous targets of shape (N,).
+        """
         if self.model is None:
             raise RuntimeError("Regressor has not been fitted yet.")
 
@@ -357,6 +514,13 @@ def create_regressor(regressor_type: str | BaseRegressor, **kwargs) -> BaseRegre
     """Factory to create a downstream regressor by name or return an existing instance.
 
     Supported types: 'linear' (or 'ridge'), 'knn', 'mlp', 'transformer'.
+
+    Args:
+        regressor_type: Regressor identifier name or an existing BaseRegressor instance.
+        **kwargs: Hyperparameters forwarded to the regressor constructor.
+
+    Returns:
+        BaseRegressor: Instantiated downstream regressor.
     """
     if isinstance(regressor_type, BaseRegressor):
         return regressor_type

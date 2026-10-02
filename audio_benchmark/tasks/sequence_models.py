@@ -7,7 +7,12 @@ from torch import nn
 
 
 class PositionalEncoding(nn.Module):
-    """Sinusoidal positional encoding."""
+    """Sinusoidal positional encoding.
+
+    Args:
+        d_model: Embedding / feature dimension.
+        max_len: Maximum supported sequence length.
+    """
 
     def __init__(self, d_model: int, max_len: int = 5000):
         super().__init__()
@@ -21,6 +26,14 @@ class PositionalEncoding(nn.Module):
         self.register_buffer("pe", pe.unsqueeze(0))  # Shape (1, max_len, d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass adding positional encoding to input tensor.
+
+        Args:
+            x: Input tensor of shape (B, T, d_model).
+
+        Returns:
+            torch.Tensor: Position-encoded tensor of shape (B, T, d_model).
+        """
         # x is (B, T, d_model)
         seq_len = x.size(1)
         return x + self.pe[:, :seq_len]
@@ -36,6 +49,10 @@ class CTCSequenceProbe(nn.Module):
 
     The blank token is placed at index 0. Real target IDs [0..vocab_size-1]
     are shifted to [1..vocab_size].
+
+    Args:
+        in_dim: Feature dimension of input audio representations.
+        vocab_size: Number of distinct target tokens (excluding CTC blank).
     """
 
     def __init__(self, in_dim: int, vocab_size: int):
@@ -63,6 +80,12 @@ class CTCSequenceProbe(nn.Module):
         """Greedy best-path decoding from representations x of shape (B, T', in_dim).
 
         Collapses consecutive repeats and drops blank tokens (index 0).
+
+        Args:
+            x: Representation sequence of shape (B, T', in_dim).
+
+        Returns:
+            list[list[int]]: Decoded token ID sequences per sample.
         """
         self.eval()
         with torch.inference_mode():
@@ -97,6 +120,15 @@ class TransformerDecoderProbe(nn.Module):
       - 1: <sos> (start of sequence)
       - 2: <eos> (end of sequence)
       - 3..vocab_size+2: user tokens
+
+    Args:
+        in_dim: Input feature dimension of audio representations.
+        vocab_size: Size of target vocabulary.
+        d_model: Decoder embedding and hidden dimension.
+        nhead: Number of attention heads in multi-head attention.
+        num_layers: Number of transformer decoder layers.
+        dim_feedforward: Dimension of the feedforward network layer.
+        dropout: Dropout probability.
     """
 
     PAD_ID = 0
@@ -173,7 +205,15 @@ class TransformerDecoderProbe(nn.Module):
         return logits
 
     def generate(self, memory: torch.Tensor, max_len: int = 50) -> list[list[int]]:
-        """Greedy autoregressive decoding starting from <sos>."""
+        """Greedy autoregressive decoding starting from <sos>.
+
+        Args:
+            memory: Audio representations tensor of shape (B, T', C').
+            max_len: Maximum generation length in tokens.
+
+        Returns:
+            list[list[int]]: Generated token ID sequences.
+        """
         self.eval()
         device = memory.device
         batch_size = memory.size(0)

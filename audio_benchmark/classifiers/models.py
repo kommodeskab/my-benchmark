@@ -20,16 +20,39 @@ class BaseClassifier(ABC):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "BaseClassifier":
-        """Train the classifier on representation features X and labels y."""
+        """Train the classifier on representation features X and labels y.
+
+        Args:
+            X: Input feature representations of shape (N, C) or (N, T', C').
+            y: Target class labels of shape (N,).
+
+        Returns:
+            BaseClassifier: Fitted classifier instance.
+        """
 
     @abstractmethod
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
-        """Predict class labels for features X."""
+        """Predict class labels for features X.
+
+        Args:
+            X: Input feature representations of shape (N, C) or (N, T', C').
+
+        Returns:
+            np.ndarray: Predicted class labels of shape (N,).
+        """
 
     def evaluate(
         self, X_test: np.ndarray | torch.Tensor, y_test: np.ndarray | torch.Tensor
     ) -> dict[str, float]:
-        """Evaluate predictions against ground truth labels."""
+        """Evaluate predictions against ground truth labels.
+
+        Args:
+            X_test: Test feature representations.
+            y_test: Ground truth class labels.
+
+        Returns:
+            dict[str, float]: Dictionary containing 'accuracy', 'macro_f1', and 'micro_f1'.
+        """
         y_test_np = to_numpy(y_test)
         y_pred = self.predict(X_test)
 
@@ -45,7 +68,16 @@ class BaseClassifier(ABC):
 
 
 class LinearBenchmarkClassifier(BaseClassifier):
-    """Linear downstream classifier (Logistic Regression or Ridge Classifier)."""
+    """Linear downstream classifier (Logistic Regression or Ridge Classifier).
+
+    Args:
+        C: Inverse regularization strength for logistic regression (smaller values specify stronger regularization).
+        max_iter: Maximum number of solver iterations.
+        random_state: Seed used by the random number generator.
+        model_type: Linear model variant: 'logistic' (default) or 'ridge'.
+        alpha: Regularization strength for Ridge. If set, forces model_type='ridge'.
+        **kwargs: Additional keyword arguments passed to the underlying scikit-learn estimator.
+    """
 
     def __init__(
         self,
@@ -80,17 +112,41 @@ class LinearBenchmarkClassifier(BaseClassifier):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "LinearBenchmarkClassifier":
+        """Fit the linear classifier on features X and labels y.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+            y: Target class labels of shape (N,).
+
+        Returns:
+            LinearBenchmarkClassifier: Fitted classifier instance.
+        """
         X_np = to_numpy(X)
         y_np = to_numpy(y).ravel()
         self.model.fit(X_np, y_np)
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict class labels for features X.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted class labels of shape (N,).
+        """
         X_np = to_numpy(X)
         return self.model.predict(X_np)
 
     def predict_proba(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
-        """Predict class probabilities for features X (when supported, e.g. LogisticRegression)."""
+        """Predict class probabilities for features X (when supported, e.g. LogisticRegression).
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted class probabilities of shape (N, num_classes).
+        """
         if hasattr(self.model, "predict_proba"):
             X_np = to_numpy(X)
             return self.model.predict_proba(X_np)
@@ -100,7 +156,13 @@ class LinearBenchmarkClassifier(BaseClassifier):
 
 
 class KNNBenchmarkClassifier(BaseClassifier):
-    """K-Nearest Neighbors downstream classifier."""
+    """K-Nearest Neighbors downstream classifier.
+
+    Args:
+        n_neighbors: Number of nearest neighbors to query.
+        metric: Distance metric to use for neighbor search (default: 'minkowski').
+        **kwargs: Additional keyword arguments passed to KNeighborsClassifier.
+    """
 
     def __init__(self, n_neighbors: int = 5, metric: str = "minkowski", **kwargs):
         self.n_neighbors = n_neighbors
@@ -113,6 +175,15 @@ class KNNBenchmarkClassifier(BaseClassifier):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "KNNBenchmarkClassifier":
+        """Fit the KNN classifier on features X and labels y.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+            y: Target class labels of shape (N,).
+
+        Returns:
+            KNNBenchmarkClassifier: Fitted classifier instance.
+        """
         X_np = to_numpy(X)
         y_np = to_numpy(y)
         # Adjust n_neighbors if dataset has fewer samples than n_neighbors
@@ -125,12 +196,27 @@ class KNNBenchmarkClassifier(BaseClassifier):
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict class labels for features X.
+
+        Args:
+            X: Input feature matrix of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted class labels of shape (N,).
+        """
         X_np = to_numpy(X)
         return self.model.predict(X_np)
 
 
 class _TorchMLP(nn.Module):
-    """Simple 2-layer MLP."""
+    """Simple 2-layer MLP for classification.
+
+    Args:
+        in_dim: Input feature dimension.
+        hidden_dim: Number of hidden units.
+        num_classes: Number of target output classes.
+        dropout: Dropout rate applied after the hidden layer.
+    """
 
     def __init__(
         self, in_dim: int, hidden_dim: int, num_classes: int, dropout: float = 0.1
@@ -144,11 +230,29 @@ class _TorchMLP(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            x: Input tensor of shape (B, in_dim).
+
+        Returns:
+            torch.Tensor: Class logits of shape (B, num_classes).
+        """
         return self.net(x)
 
 
 class MLPBenchmarkClassifier(BaseClassifier):
-    """Multi-Layer Perceptron downstream classifier."""
+    """Multi-Layer Perceptron downstream classifier.
+
+    Args:
+        hidden_dim: Number of units in the hidden layer.
+        dropout: Dropout probability applied after the hidden layer.
+        lr: Learning rate for Adam optimizer.
+        epochs: Number of training epochs.
+        batch_size: Batch size for training DataLoader.
+        weight_decay: L2 penalty for Adam optimizer.
+        device: Device to use for training and inference ('auto', 'cpu', 'cuda').
+    """
 
     def __init__(
         self,
@@ -173,6 +277,15 @@ class MLPBenchmarkClassifier(BaseClassifier):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "MLPBenchmarkClassifier":
+        """Train the MLP classifier on features X and labels y.
+
+        Args:
+            X: Input feature representations of shape (N, C).
+            y: Target class labels of shape (N,).
+
+        Returns:
+            MLPBenchmarkClassifier: Fitted classifier instance.
+        """
         X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
         y_t = torch.as_tensor(to_numpy(y), dtype=torch.long)
 
@@ -209,6 +322,14 @@ class MLPBenchmarkClassifier(BaseClassifier):
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict class labels for features X.
+
+        Args:
+            X: Input feature representations of shape (N, C).
+
+        Returns:
+            np.ndarray: Predicted class labels of shape (N,).
+        """
         if self.model is None:
             raise RuntimeError("Classifier has not been fitted yet.")
 
@@ -221,7 +342,18 @@ class MLPBenchmarkClassifier(BaseClassifier):
 
 
 class _TorchTransformerClassifier(nn.Module):
-    """Non-causal Transformer Encoder classifier."""
+    """Non-causal Transformer Encoder classifier.
+
+    Args:
+        in_dim: Input representation feature dimension per frame.
+        num_classes: Number of target output classes.
+        d_model: Embedding dimension of the transformer encoder.
+        nhead: Number of attention heads in multi-head attention.
+        num_layers: Number of transformer encoder layers.
+        dim_feedforward: Dimension of the feedforward network model.
+        dropout: Dropout probability.
+        aggregation: Aggregation strategy over time ('cls' token or 'mean' pooling).
+    """
 
     def __init__(
         self,
@@ -260,6 +392,14 @@ class _TorchTransformerClassifier(nn.Module):
         self.head = nn.Linear(d_model, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            x: Input sequence tensor of shape (B, T, in_dim).
+
+        Returns:
+            torch.Tensor: Class logits of shape (B, num_classes).
+        """
         # x is (B, T, in_dim)
         h = self.proj(x)
         if self.aggregation == "cls":
@@ -276,6 +416,19 @@ class TransformerBenchmarkClassifier(BaseClassifier):
 
     Attends bidirectional across all features in the representation sequence
     without pooling before the transformer.
+
+    Args:
+        d_model: Transformer hidden dimension (must be divisible by nhead).
+        nhead: Number of parallel attention heads.
+        num_layers: Number of transformer encoder layers.
+        dim_feedforward: Dimension of the feedforward network layer.
+        dropout: Dropout probability.
+        aggregation: Sequence pooling method ('cls' or 'mean').
+        lr: Learning rate for Adam optimizer.
+        epochs: Number of training epochs.
+        batch_size: Batch size for training DataLoader.
+        weight_decay: L2 penalty for Adam optimizer.
+        device: Device to use for training and inference ('auto', 'cpu', 'cuda').
     """
 
     accepts_sequence: bool = True
@@ -320,6 +473,15 @@ class TransformerBenchmarkClassifier(BaseClassifier):
     def fit(
         self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
     ) -> "TransformerBenchmarkClassifier":
+        """Train the transformer classifier on representation sequences X and labels y.
+
+        Args:
+            X: Input sequence representations of shape (N, T', C') or (N, C').
+            y: Target class labels of shape (N,).
+
+        Returns:
+            TransformerBenchmarkClassifier: Fitted classifier instance.
+        """
         X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
@@ -362,6 +524,14 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+        """Predict class labels for representations X.
+
+        Args:
+            X: Input sequence representations of shape (N, T', C') or (N, C').
+
+        Returns:
+            np.ndarray: Predicted class labels of shape (N,).
+        """
         if self.model is None:
             raise RuntimeError("Classifier has not been fitted yet.")
 
@@ -383,6 +553,13 @@ def create_classifier(
     """Factory to create a downstream classifier by name or return an existing instance.
 
     Supported types: 'linear' (or 'logistic', 'ridge'), 'knn', 'mlp', 'transformer'.
+
+    Args:
+        classifier_type: Classifier identifier name or an existing BaseClassifier instance.
+        **kwargs: Hyperparameters forwarded to the classifier constructor.
+
+    Returns:
+        BaseClassifier: Instantiated downstream classifier.
     """
     if isinstance(classifier_type, BaseClassifier):
         return classifier_type

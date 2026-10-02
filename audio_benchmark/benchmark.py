@@ -16,7 +16,17 @@ from audio_benchmark.tasks.base import BaseTask
 
 @dataclass
 class BenchmarkResult:
-    """Stores the outcome of a benchmark execution."""
+    """Stores the outcome of a benchmark execution.
+
+    Attributes:
+        model_name: Identifier of the representation model.
+        dataset_name: Identifier of the dataset.
+        task_name: Identifier of the executed benchmark task.
+        metrics: Dictionary of metric names and numeric results.
+        cached: Whether representations were retrieved from cache.
+        representations_shape: Shape tuple of the extracted representations (N, T', C').
+        extra_info: Auxiliary dataset statistics and baseline metric results.
+    """
 
     model_name: str
     dataset_name: str
@@ -332,5 +342,10 @@ class AudioBenchmark:
     def clear_cache(
         self, model_name: str | None = None, dataset_name: str | None = None
     ) -> None:
-        """Clear cached representations."""
+        """Clear cached representations.
+
+        Args:
+            model_name: Optional model name to filter which cache entries to delete.
+            dataset_name: Optional dataset name to filter which cache entries to delete.
+        """
         self.cache.clear(model_name=model_name, dataset_name=dataset_name)

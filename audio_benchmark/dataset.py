@@ -186,7 +186,15 @@ def collate_audio_batch(
 
 
 def get_dataset_name(dataset: Any, default: str = "dataset") -> str:
-    """Retrieve an identifiable name for a dataset."""
+    """Retrieve an identifiable name for a dataset.
+
+    Args:
+        dataset: The dataset object to inspect.
+        default: Fallback name if no dataset name attribute is found.
+
+    Returns:
+        str: String identifier for the dataset.
+    """
     if (
         hasattr(dataset, "name")
         and isinstance(dataset.name, str)

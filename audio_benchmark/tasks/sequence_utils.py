@@ -9,6 +9,13 @@ def levenshtein_distance(ref: Sequence[Any], hyp: Sequence[Any]) -> int:
 
     Returns the minimum number of insertions, deletions, and substitutions
     required to transform hyp into ref.
+
+    Args:
+        ref: Ground truth reference token sequence.
+        hyp: Predicted hypothesis token sequence.
+
+    Returns:
+        int: Total edit distance.
     """
     n, m = len(ref), len(hyp)
     if n == 0:
@@ -39,6 +46,10 @@ def compute_token_error_rate(
 ) -> tuple[float, float]:
     """Compute Token Error Rate (PER/CER) and Exact Sequence Accuracy.
 
+    Args:
+        references: Collection of ground truth reference token sequences.
+        hypotheses: Collection of predicted hypothesis token sequences.
+
     Returns:
         tuple[float, float]: (token_error_rate, sequence_accuracy)
     """
@@ -59,7 +70,11 @@ def compute_token_error_rate(
 
 
 class Vocabulary:
-    """Vocabulary mapping between raw tokens and contiguous integer indices."""
+    """Vocabulary mapping between raw tokens and contiguous integer indices.
+
+    Args:
+        sequences: Collection of token sequences used to build the vocabulary.
+    """
 
     def __init__(self, sequences: Sequence[Sequence[Any]]):
         unique_tokens = sorted({tok for seq in sequences for tok in seq})
@@ -75,7 +90,23 @@ class Vocabulary:
         return [self.id_to_token[i] for i in range(len(self.id_to_token))]
 
     def encode(self, sequence: Sequence[Any]) -> list[int]:
+        """Convert a sequence of raw tokens to integer IDs.
+
+        Args:
+            sequence: Sequence of raw tokens.
+
+        Returns:
+            list[int]: List of corresponding token integer IDs.
+        """
         return [self.token_to_id[tok] for tok in sequence]
 
     def decode(self, indices: Sequence[int]) -> list[Any]:
+        """Convert a sequence of integer IDs back to raw tokens.
+
+        Args:
+            indices: Sequence of integer token IDs.
+
+        Returns:
+            list[Any]: List of corresponding original tokens.
+        """
         return [self.id_to_token[idx] for idx in indices if idx in self.id_to_token]

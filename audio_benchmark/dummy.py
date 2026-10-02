@@ -13,6 +13,14 @@ class DummyAudioDataset(Dataset):
 
     Generates synthetic sine waves with distinct frequencies per class,
     simulating realistic audio inputs with ground truth labels in metadata.
+
+    Args:
+        num_samples: Number of synthetic audio samples to generate.
+        audio_length: Number of raw waveform points per sample (length T).
+        num_classes: Number of distinct classes / categories.
+        sample_rate: Audio sampling rate in Hz.
+        name: Name identifier for the dataset.
+        seed: Random seed for reproducible synthetic generation.
     """
 
     def __init__(
@@ -96,6 +104,10 @@ class DummyAudioModel(nn.Module):
 
     Maps 1D raw audio of shape (B, 1, T) to sequence representations
     of shape (B, T', C') using 1D convolutional layers.
+
+    Args:
+        in_channels: Number of input audio channels (default: 1 for mono).
+        representation_dim: Feature dimension C' of output representation sequence.
     """
 
     def __init__(self, in_channels: int = 1, representation_dim: int = 64):
