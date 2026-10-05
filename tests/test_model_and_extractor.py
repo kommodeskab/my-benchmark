@@ -108,3 +108,29 @@ def test_extract_representations_empty_dataset():
             batch_size=2,
             device="cpu",
         )
+
+
+def test_extract_representations_progress_bar(monkeypatch):
+    calls = []
+
+    def mock_tqdm(iterable, *args, **kwargs):
+        calls.append((args, kwargs))
+        return iterable
+
+    monkeypatch.setattr("audio_benchmark.extractor.tqdm", mock_tqdm)
+
+    dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
+    model = DummyAudioModel(representation_dim=16)
+
+    # 1. Default show_progress=True
+    extract_representations(model=model, dataset=dataset, batch_size=2, device="cpu")
+    assert len(calls) == 1
+    assert calls[0][1].get("desc") == "Extracting features"
+    assert calls[0][1].get("disable") is False
+
+    # 2. Explicit show_progress=False
+    extract_representations(
+        model=model, dataset=dataset, batch_size=2, device="cpu", show_progress=False
+    )
+    assert len(calls) == 2
+    assert calls[1][1].get("disable") is True

@@ -238,15 +238,18 @@ class AudioBenchmark:
         self,
         cache_dir: str | Path = ".benchmark_cache",
         enable_cache: bool = True,
+        show_progress: bool = True,
     ):
         """Initialize the benchmark suite.
 
         Args:
             cache_dir: Filesystem directory for caching representations.
             enable_cache: Whether to use caching for computed representations.
+            show_progress: Whether to display a tqdm progress bar during feature extraction.
         """
         self.cache_dir = Path(cache_dir)
         self.enable_cache = enable_cache
+        self.show_progress = show_progress
         self.cache = RepresentationCache(cache_dir=self.cache_dir)
 
     def run(
@@ -259,6 +262,7 @@ class AudioBenchmark:
         batch_size: int = 16,
         device: str | torch.device = "auto",
         force_recompute: bool = False,
+        show_progress: bool | None = None,
     ) -> BenchmarkResult:
         """Run representation extraction and benchmark evaluation for a model on a dataset.
 
@@ -271,6 +275,8 @@ class AudioBenchmark:
             batch_size: Batch size for representation extraction.
             device: Device to run representation model on ('auto', 'cpu', 'cuda', etc.).
             force_recompute: If True, bypass cache and recompute representations.
+            show_progress: Whether to display a tqdm progress bar during feature extraction.
+                If None, defaults to `self.show_progress`.
 
         Returns:
             BenchmarkResult: The result containing metrics and metadata.
@@ -281,6 +287,9 @@ class AudioBenchmark:
             )
 
         resolved_dataset_name = dataset_name or get_dataset_name(dataset)
+        effective_show_progress = (
+            self.show_progress if show_progress is None else show_progress
+        )
 
         # 1. Validate dataset against task requirements
         task.validate_dataset(dataset)
@@ -317,6 +326,7 @@ class AudioBenchmark:
                     batch_size=batch_size,
                     device=device,
                     mmap_path=mmap_path,
+                    show_progress=effective_show_progress,
                 )
 
                 self.cache.commit_temp_dir(
@@ -333,6 +343,7 @@ class AudioBenchmark:
                     batch_size=batch_size,
                     device=device,
                     mmap_path=None,
+                    show_progress=effective_show_progress,
                 )
 
         # 4. Evaluate representations on the task

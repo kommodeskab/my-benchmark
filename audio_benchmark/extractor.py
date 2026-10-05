@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from audio_benchmark.dataset import collate_audio_batch, validate_dataset
 from audio_benchmark.exceptions import InvalidModelError, InvalidModelOutputError
@@ -32,6 +33,7 @@ def extract_representations(
     device: str | torch.device = "auto",
     num_workers: int = 0,
     mmap_path: str | Path | None = None,
+    show_progress: bool = True,
 ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
     """Extract representations from a dataset using a PyTorch representation model.
 
@@ -46,6 +48,7 @@ def extract_representations(
         num_workers: Number of workers for DataLoader.
         mmap_path: Optional explicit filesystem path for the memory-mapped `.npy` file.
             If None, a temporary file is automatically created and cleaned up.
+        show_progress: Whether to display a tqdm progress bar during feature extraction.
 
     Returns:
         tuple[torch.Tensor, list[dict[str, Any]]]:
@@ -97,9 +100,15 @@ def extract_representations(
     t_prime = 0
     c_prime = 0
 
+    progress_bar = tqdm(
+        dataloader,
+        desc="Extracting features",
+        disable=not show_progress,
+    )
+
     try:
         with torch.inference_mode():
-            for batch_idx, (audio_batch, meta_batch) in enumerate(dataloader):
+            for audio_batch, meta_batch in progress_bar:
                 audio_batch = audio_batch.to(target_device)
                 output = model(audio_batch)
 
