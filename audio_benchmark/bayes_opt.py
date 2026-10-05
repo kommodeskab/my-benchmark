@@ -130,7 +130,8 @@ def get_default_classifier_param_space(
         }
     elif issubclass(cls, MLPBenchmarkClassifier):
         return {
-            "hidden_dim": [32, 64, 128, 256],
+            "hidden_dim": [128, 256, 512, 1024],
+            "num_layers": [1, 2],
             "dropout": (0.0, 0.5),
             "lr": (1e-4, 1e-2, "log"),
             "weight_decay": (1e-6, 1e-2, "log"),
@@ -178,7 +179,8 @@ def get_default_regressor_param_space(
         }
     elif issubclass(cls, MLPBenchmarkRegressor):
         return {
-            "hidden_dim": [32, 64, 128, 256],
+            "hidden_dim": [128, 256, 512, 1024],
+            "num_layers": [1, 2],
             "dropout": (0.0, 0.5),
             "lr": (1e-4, 1e-2, "log"),
             "weight_decay": (1e-6, 1e-2, "log"),

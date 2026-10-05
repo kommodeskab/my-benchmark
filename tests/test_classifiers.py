@@ -122,3 +122,84 @@ def test_transformer_classifier():
     )
     clf_mean.fit(X[:8], y[:8])
     assert len(clf_mean.predict(X[8:])) == 2
+
+
+def test_classifier_feature_normalization(synthetic_data):
+    X_train, y_train, X_test, _ = synthetic_data
+
+    # Check defaults: normalize_features is True
+    for clf in (
+        LinearBenchmarkClassifier(),
+        KNNBenchmarkClassifier(),
+        MLPBenchmarkClassifier(epochs=1, batch_size=8, device="cpu"),
+        TransformerBenchmarkClassifier(
+            d_model=16, nhead=2, epochs=1, batch_size=4, device="cpu"
+        ),
+    ):
+        assert clf.normalize_features is True
+        assert clf.scaler is None
+
+    # Check scaler is fitted and applied for 2D models
+    for clf_class in (
+        LinearBenchmarkClassifier,
+        KNNBenchmarkClassifier,
+        lambda: MLPBenchmarkClassifier(epochs=1, batch_size=8, device="cpu"),
+    ):
+        clf_norm = clf_class()
+        clf_norm.fit(X_train, y_train)
+        assert clf_norm.scaler is not None
+        preds_norm = clf_norm.predict(X_test)
+        assert len(preds_norm) == len(X_test)
+
+        # Check normalize_features=False
+        clf_no_norm = clf_class()
+        clf_no_norm.normalize_features = False
+        clf_no_norm.fit(X_train, y_train)
+        assert clf_no_norm.scaler is None
+        preds_no_norm = clf_no_norm.predict(X_test)
+        assert len(preds_no_norm) == len(X_test)
+
+
+def test_mlp_classifier_architecture_and_layers(synthetic_data):
+    X_train, y_train, X_test, _ = synthetic_data
+
+    # Verify default hidden_dim is 1024 and num_layers is 1
+    default_mlp = MLPBenchmarkClassifier(device="cpu")
+    assert default_mlp.hidden_dim == 1024
+    assert default_mlp.num_layers == 1
+
+    # Verify multi-layer MLP (num_layers=2)
+    mlp_2layer = MLPBenchmarkClassifier(
+        hidden_dim=32, num_layers=2, epochs=1, batch_size=8, device="cpu"
+    )
+    mlp_2layer.fit(X_train, y_train)
+    assert len(mlp_2layer.predict(X_test)) == len(X_test)
+
+    # Verify linear projection (num_layers=0)
+    mlp_0layer = MLPBenchmarkClassifier(
+        num_layers=0, epochs=1, batch_size=8, device="cpu"
+    )
+    mlp_0layer.fit(X_train, y_train)
+    assert len(mlp_0layer.predict(X_test)) == len(X_test)
+
+    # Verify negative num_layers raises ValueError
+    with pytest.raises(ValueError, match="num_layers must be non-negative"):
+        MLPBenchmarkClassifier(num_layers=-1, device="cpu")
+
+
+def test_transformer_classifier_feature_normalization():
+    np.random.seed(42)
+    X = np.random.randn(10, 6, 8).astype(np.float32) * 50.0 + 100.0
+    y = np.array([0, 1] * 5)
+    clf = TransformerBenchmarkClassifier(
+        d_model=16,
+        nhead=2,
+        epochs=1,
+        batch_size=4,
+        device="cpu",
+        normalize_features=True,
+    )
+    clf.fit(X[:8], y[:8])
+    assert clf.scaler is not None
+    preds = clf.predict(X[8:])
+    assert len(preds) == 2

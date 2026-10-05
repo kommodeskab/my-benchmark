@@ -7,6 +7,7 @@ import torch
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
 from torch import nn
 from tqdm import tqdm
 
@@ -76,6 +77,7 @@ class LinearBenchmarkClassifier(BaseClassifier):
         random_state: Seed used by the random number generator.
         model_type: Linear model variant: 'logistic' (default) or 'ridge'.
         alpha: Regularization strength for Ridge. If set, forces model_type='ridge'.
+        normalize_features: Whether to standardize input features to zero mean and unit variance.
     """
 
     def __init__(
@@ -85,11 +87,14 @@ class LinearBenchmarkClassifier(BaseClassifier):
         random_state: int | None = 42,
         model_type: str = "logistic",
         alpha: float | None = None,
+        normalize_features: bool = True,
     ):
         self.C = C
         self.max_iter = max_iter
         self.random_state = random_state
         self.alpha = alpha
+        self.normalize_features = normalize_features
+        self.scaler: StandardScaler | None = None
 
         norm_type = str(model_type).lower().strip()
         if alpha is not None or norm_type == "ridge":
@@ -120,6 +125,11 @@ class LinearBenchmarkClassifier(BaseClassifier):
         """
         X_np = to_numpy(X)
         y_np = to_numpy(y).ravel()
+        if self.normalize_features:
+            self.scaler = StandardScaler()
+            X_np = self.scaler.fit_transform(X_np).astype(np.float32)
+        else:
+            self.scaler = None
         self.model.fit(X_np, y_np)
         return self
 
@@ -133,6 +143,8 @@ class LinearBenchmarkClassifier(BaseClassifier):
             np.ndarray: Predicted class labels of shape (N,).
         """
         X_np = to_numpy(X)
+        if self.scaler is not None:
+            X_np = self.scaler.transform(X_np).astype(np.float32)
         return self.model.predict(X_np)
 
     def predict_proba(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
@@ -146,6 +158,8 @@ class LinearBenchmarkClassifier(BaseClassifier):
         """
         if hasattr(self.model, "predict_proba"):
             X_np = to_numpy(X)
+            if self.scaler is not None:
+                X_np = self.scaler.transform(X_np).astype(np.float32)
             return self.model.predict_proba(X_np)
         raise AttributeError(
             f"{self.model.__class__.__name__} does not support predict_proba."
@@ -159,6 +173,7 @@ class KNNBenchmarkClassifier(BaseClassifier):
         n_neighbors: Number of nearest neighbors to query.
         metric: Distance metric to use for neighbor search (default: 'minkowski').
         weights: Weight function used in prediction ('uniform' or 'distance').
+        normalize_features: Whether to standardize input features to zero mean and unit variance.
     """
 
     def __init__(
@@ -166,10 +181,13 @@ class KNNBenchmarkClassifier(BaseClassifier):
         n_neighbors: int = 5,
         metric: str = "minkowski",
         weights: str = "uniform",
+        normalize_features: bool = True,
     ):
         self.n_neighbors = n_neighbors
         self.metric = metric
         self.weights = weights
+        self.normalize_features = normalize_features
+        self.scaler: StandardScaler | None = None
         self.model = KNeighborsClassifier(
             n_neighbors=n_neighbors, metric=metric, weights=weights
         )
@@ -188,6 +206,11 @@ class KNNBenchmarkClassifier(BaseClassifier):
         """
         X_np = to_numpy(X)
         y_np = to_numpy(y)
+        if self.normalize_features:
+            self.scaler = StandardScaler()
+            X_np = self.scaler.fit_transform(X_np).astype(np.float32)
+        else:
+            self.scaler = None
         # Adjust n_neighbors if dataset has fewer samples than n_neighbors
         effective_k = min(self.n_neighbors, len(X_np))
         if effective_k != self.n_neighbors:
@@ -207,29 +230,43 @@ class KNNBenchmarkClassifier(BaseClassifier):
             np.ndarray: Predicted class labels of shape (N,).
         """
         X_np = to_numpy(X)
+        if self.scaler is not None:
+            X_np = self.scaler.transform(X_np).astype(np.float32)
         return self.model.predict(X_np)
 
 
 class _TorchMLP(nn.Module):
-    """Simple 2-layer MLP for classification.
+    """Multi-Layer Perceptron for classification.
 
     Args:
         in_dim: Input feature dimension.
-        hidden_dim: Number of hidden units.
+        hidden_dim: Number of hidden units per layer (default: 1024).
         num_classes: Number of target output classes.
-        dropout: Dropout rate applied after the hidden layer.
+        dropout: Dropout rate applied after each hidden layer.
+        num_layers: Number of hidden layers (default: 1).
     """
 
     def __init__(
-        self, in_dim: int, hidden_dim: int, num_classes: int, dropout: float = 0.1
+        self,
+        in_dim: int,
+        hidden_dim: int = 1024,
+        num_classes: int = 2,
+        dropout: float = 0.1,
+        num_layers: int = 1,
     ):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes),
-        )
+        if num_layers < 0:
+            raise ValueError(f"num_layers must be non-negative, got {num_layers}.")
+        self.num_layers = num_layers
+        layers: list[nn.Module] = []
+        cur_dim = in_dim
+        for _ in range(num_layers):
+            layers.append(nn.Linear(cur_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
+            cur_dim = hidden_dim
+        layers.append(nn.Linear(cur_dim, num_classes))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.
@@ -247,18 +284,22 @@ class MLPBenchmarkClassifier(BaseClassifier):
     """Multi-Layer Perceptron downstream classifier.
 
     Args:
-        hidden_dim: Number of units in the hidden layer.
-        dropout: Dropout probability applied after the hidden layer.
+        hidden_dim: Number of units in each hidden layer (default: 1024).
+        num_layers: Number of hidden layers (default: 1).
+        dropout: Dropout probability applied after each hidden layer.
         lr: Learning rate for Adam optimizer.
         epochs: Number of training epochs.
         batch_size: Batch size for training DataLoader.
         weight_decay: L2 penalty for Adam optimizer.
         device: Device to use for training and inference ('auto', 'cpu', 'cuda').
+        show_progress: Whether to display a tqdm progress bar during training.
+        normalize_features: Whether to standardize input features to zero mean and unit variance.
     """
 
     def __init__(
         self,
-        hidden_dim: int = 128,
+        hidden_dim: int = 1024,
+        num_layers: int = 1,
         dropout: float = 0.1,
         lr: float = 1e-3,
         epochs: int = 30,
@@ -266,8 +307,12 @@ class MLPBenchmarkClassifier(BaseClassifier):
         weight_decay: float = 1e-4,
         device: str = "auto",
         show_progress: bool = True,
+        normalize_features: bool = True,
     ):
+        if num_layers < 0:
+            raise ValueError(f"num_layers must be non-negative, got {num_layers}.")
         self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
         self.dropout = dropout
         self.lr = lr
         self.epochs = epochs
@@ -275,6 +320,8 @@ class MLPBenchmarkClassifier(BaseClassifier):
         self.weight_decay = weight_decay
         self.device_str = device
         self.show_progress = show_progress
+        self.normalize_features = normalize_features
+        self.scaler: StandardScaler | None = None
         self.model: _TorchMLP | None = None
         self.device = resolve_device(device)
 
@@ -290,7 +337,14 @@ class MLPBenchmarkClassifier(BaseClassifier):
         Returns:
             MLPBenchmarkClassifier: Fitted classifier instance.
         """
-        X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
+        X_np = to_numpy(X)
+        if self.normalize_features:
+            self.scaler = StandardScaler()
+            X_np = self.scaler.fit_transform(X_np).astype(np.float32)
+        else:
+            self.scaler = None
+
+        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         y_t = torch.as_tensor(to_numpy(y), dtype=torch.long)
 
         in_dim = X_t.shape[1]
@@ -301,6 +355,7 @@ class MLPBenchmarkClassifier(BaseClassifier):
             hidden_dim=self.hidden_dim,
             num_classes=num_classes,
             dropout=self.dropout,
+            num_layers=self.num_layers,
         ).to(self.device)
 
         dataset = torch.utils.data.TensorDataset(X_t, y_t)
@@ -348,8 +403,12 @@ class MLPBenchmarkClassifier(BaseClassifier):
         if self.model is None:
             raise RuntimeError("Classifier has not been fitted yet.")
 
+        X_np = to_numpy(X)
+        if self.scaler is not None:
+            X_np = self.scaler.transform(X_np).astype(np.float32)
+
         self.model.eval()
-        X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32).to(self.device)
+        X_t = torch.as_tensor(X_np, dtype=torch.float32).to(self.device)
         with torch.inference_mode():
             logits = self.model(X_t)
             preds = logits.argmax(dim=-1).cpu().numpy()
@@ -462,6 +521,7 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         weight_decay: float = 1e-4,
         device: str = "auto",
         show_progress: bool = True,
+        normalize_features: bool = True,
     ):
         if d_model % nhead != 0:
             raise ValueError(
@@ -484,6 +544,8 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         self.weight_decay = weight_decay
         self.device_str = device
         self.show_progress = show_progress
+        self.normalize_features = normalize_features
+        self.scaler: StandardScaler | None = None
         self.model: _TorchTransformerClassifier | None = None
         self.device = resolve_device(device)
 
@@ -499,7 +561,18 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         Returns:
             TransformerBenchmarkClassifier: Fitted classifier instance.
         """
-        X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
+        X_np = to_numpy(X)
+        if self.normalize_features:
+            self.scaler = StandardScaler()
+            orig_shape = X_np.shape
+            X_flat = X_np.reshape(-1, orig_shape[-1])
+            X_np = (
+                self.scaler.fit_transform(X_flat).astype(np.float32).reshape(orig_shape)
+            )
+        else:
+            self.scaler = None
+
+        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
         y_t = torch.as_tensor(to_numpy(y), dtype=torch.long)
@@ -563,8 +636,14 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         if self.model is None:
             raise RuntimeError("Classifier has not been fitted yet.")
 
+        X_np = to_numpy(X)
+        if self.scaler is not None:
+            orig_shape = X_np.shape
+            X_flat = X_np.reshape(-1, orig_shape[-1])
+            X_np = self.scaler.transform(X_flat).astype(np.float32).reshape(orig_shape)
+
         self.model.eval()
-        X_t = torch.as_tensor(to_numpy(X), dtype=torch.float32)
+        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
         X_t = X_t.to(self.device)
