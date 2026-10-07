@@ -42,28 +42,29 @@ def main():
         name="synthetic_speech_test",
     )
 
-    benchmark = AudioBenchmark(cache_dir=".benchmark_cache", enable_cache=True)
-
     print("\nExecuting benchmark tasks...")
     # Step 1: Attain all results silently from benchmark.run()
-    result_global_clf = benchmark.run(
+    result_global_clf = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
-        batch_size=16,
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run(batch_size=16)
 
-    result_global_reg = benchmark.run(
+    result_global_reg = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=LinearBenchmarkRegressor()),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
 
-    result_global_clf_tf = benchmark.run(
+    result_global_clf_tf = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
@@ -71,47 +72,59 @@ def main():
         task=GlobalClassificationTask(
             classifier=TransformerBenchmarkClassifier(epochs=15)
         ),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
 
-    result_global_reg_tf = benchmark.run(
+    result_global_reg_tf = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=TransformerBenchmarkRegressor(epochs=15)),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
 
-    result_frame_clf = benchmark.run(
+    result_frame_clf = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=FrameClassificationTask(classifier=KNNBenchmarkClassifier()),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
 
-    result_frame_reg = benchmark.run(
+    result_frame_reg = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=FrameRegressionTask(regressor=LinearBenchmarkRegressor()),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
 
-    result_seq_ctc = benchmark.run(
+    result_seq_ctc = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=SequenceModelingTask(probe=CTCSequenceProbe(epochs=15)),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
 
-    result_seq_tf = benchmark.run(
+    result_seq_tf = AudioBenchmark(
         model=model,
         model_name=model_name,
         dataset=dataset,
         testset=testset,
         task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=15)),
-    )
+        cache_dir=".benchmark_cache",
+        enable_cache=True,
+    ).run()
     print("All tasks finished successfully.\n")
 
     # Step 2: The user decides how and when to print the results

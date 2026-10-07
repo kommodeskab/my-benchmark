@@ -261,7 +261,6 @@ def test_bayes_opt_regressor_string_rejected():
 
 
 def test_bayes_opt_in_task_and_benchmark(tmp_path):
-    benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=False)
     dataset = DummyAudioDataset(num_samples=16, audio_length=320, num_classes=2)
     testset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=8)
@@ -275,12 +274,17 @@ def test_bayes_opt_in_task_and_benchmark(tmp_path):
     )
     task = GlobalClassificationTask(classifier=opt_classifier)
 
-    result = benchmark.run(
+    benchmark = AudioBenchmark(
         model=model,
         model_name="dummy_opt_encoder",
         dataset=dataset,
         testset=testset,
         task=task,
+        cache_dir=tmp_path,
+        enable_cache=False,
+    )
+
+    result = benchmark.run(
         batch_size=4,
         device="cpu",
     )
@@ -300,7 +304,6 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
             item["metadata"]["target"] = float(idx * 0.5)
             return item
 
-    benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=False)
     dataset = DummyRegressionDataset(num_samples=16, audio_length=320, num_classes=2)
     testset = DummyRegressionDataset(num_samples=8, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=8)
@@ -314,12 +317,17 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
     )
     task = RegressionTask(regressor=opt_regressor, target_key="target")
 
-    result = benchmark.run(
+    benchmark = AudioBenchmark(
         model=model,
         model_name="dummy_opt_reg_encoder",
         dataset=dataset,
         testset=testset,
         task=task,
+        cache_dir=tmp_path,
+        enable_cache=False,
+    )
+
+    result = benchmark.run(
         batch_size=4,
         device="cpu",
     )

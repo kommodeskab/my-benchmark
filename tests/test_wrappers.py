@@ -267,17 +267,20 @@ def test_wrapper_chaining_and_task_execution():
 
     # 3. Test FrameClassificationTask directly on the VAD-annotated dataset
     model = DummyAudioModel(representation_dim=32)
-    benchmark = AudioBenchmark(cache_dir=".test_wrapper_cache", enable_cache=False)
 
     vad_task = FrameClassificationTask(
         classifier=KNNBenchmarkClassifier(), label_key="frame_labels"
     )
-    vad_res = benchmark.run(
+    benchmark_vad = AudioBenchmark(
         model=model,
         model_name="test_model",
         dataset=ds_with_vad,
         testset=test_with_vad,
         task=vad_task,
+        cache_dir=".test_wrapper_cache",
+        enable_cache=False,
+    )
+    vad_res = benchmark_vad.run(
         batch_size=4,
     )
     assert "accuracy" in vad_res.metrics
@@ -287,12 +290,15 @@ def test_wrapper_chaining_and_task_execution():
     seq_task = SequenceModelingTask(
         probe=CTCSequenceProbe(epochs=5, batch_size=4), target_key="tokens"
     )
-    seq_res = benchmark.run(
+    benchmark_seq = AudioBenchmark(
         model=model,
         model_name="test_model",
         dataset=ds_with_vad,
         testset=test_with_vad,
         task=seq_task,
+        cache_dir=".test_wrapper_cache",
+        enable_cache=False,
     )
+    seq_res = benchmark_seq.run()
     assert "token_error_rate" in seq_res.metrics
     assert seq_res.metrics["token_error_rate"] >= 0.0

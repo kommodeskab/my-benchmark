@@ -218,7 +218,6 @@ def test_sequence_modeling_transformer():
 
 
 def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
-    benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
     train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
@@ -226,12 +225,16 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
     # CTC probe
     probe_ctc = CTCSequenceProbe(epochs=1, batch_size=4, device="cpu")
     task_ctc = SequenceModelingTask(probe=probe_ctc)
-    res_ctc = benchmark.run(
+    benchmark_ctc = AudioBenchmark(
         model=model,
         model_name="dummy_seq_model",
         dataset=train_dataset,
         testset=test_dataset,
         task=task_ctc,
+        cache_dir=tmp_path,
+        enable_cache=True,
+    )
+    res_ctc = benchmark_ctc.run(
         device="cpu",
     )
     assert res_ctc.task_name == "sequence_modeling"
@@ -249,12 +252,16 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
         device="cpu",
     )
     task_tf = SequenceModelingTask(probe=probe_tf)
-    res_tf = benchmark.run(
+    benchmark_tf = AudioBenchmark(
         model=model,
         model_name="dummy_seq_model",
         dataset=train_dataset,
         testset=test_dataset,
         task=task_tf,
+        cache_dir=tmp_path,
+        enable_cache=True,
+    )
+    res_tf = benchmark_tf.run(
         device="cpu",
     )
     assert res_tf.task_name == "sequence_modeling"

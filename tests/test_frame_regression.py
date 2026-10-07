@@ -80,18 +80,22 @@ def test_frame_regression_dataset_validation():
 
 
 def test_benchmark_runner_with_frame_regression(tmp_path):
-    benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
     train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
     task = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
 
-    result = benchmark.run(
+    benchmark = AudioBenchmark(
         model=model,
         model_name="dummy_frame_reg_model",
         dataset=train_dataset,
         testset=test_dataset,
         task=task,
+        cache_dir=tmp_path,
+        enable_cache=True,
+    )
+
+    result = benchmark.run(
         batch_size=4,
         device="cpu",
     )

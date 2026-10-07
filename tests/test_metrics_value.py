@@ -208,31 +208,36 @@ def test_sequence_modeling_task_value():
 
 
 def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
-    benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=False)
     dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=2)
     testset = DummyAudioDataset(num_samples=6, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
 
     # Global classification
-    res_clf = benchmark.run(
+    benchmark_clf = AudioBenchmark(
         model=model,
         model_name="test_model",
         dataset=dataset,
         testset=testset,
         task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
+        cache_dir=tmp_path,
+        enable_cache=False,
     )
+    res_clf = benchmark_clf.run()
     assert "value" in res_clf.metrics
     assert res_clf.metrics["value"] == res_clf.metrics["accuracy"]
     assert res_clf.value == res_clf.metrics["accuracy"]
 
     # Regression
-    res_reg = benchmark.run(
+    benchmark_reg = AudioBenchmark(
         model=model,
         model_name="test_model",
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=LinearBenchmarkRegressor()),
+        cache_dir=tmp_path,
+        enable_cache=False,
     )
+    res_reg = benchmark_reg.run()
     assert "value" in res_reg.metrics
     assert res_reg.metrics["value"] == res_reg.metrics["r2"]
     assert res_reg.value == res_reg.metrics["r2"]

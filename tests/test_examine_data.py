@@ -252,19 +252,22 @@ def test_sequence_modeling_examine_data():
 
 
 def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
-    benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=False)
     dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=3)
     testset = DummyAudioDataset(num_samples=5, audio_length=320, num_classes=3)
     model = DummyAudioModel(representation_dim=16)
     task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
 
-    result = benchmark.run(
+    benchmark = AudioBenchmark(
         model=model,
         model_name="test_model",
         dataset=dataset,
         testset=testset,
         task=task,
+        cache_dir=tmp_path,
+        enable_cache=False,
     )
+
+    result = benchmark.run()
 
     # Extra info populated from examine_data directly
     info = task.examine_data(dataset, testset)
