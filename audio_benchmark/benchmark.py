@@ -91,8 +91,6 @@ class AudioBenchmark:
 
     def __init__(
         self,
-        model: torch.nn.Module,
-        model_name: str,
         dataset: Dataset,
         testset: Dataset,
         task: BaseTask,
@@ -101,11 +99,9 @@ class AudioBenchmark:
         cache_dir: str | Path = ".benchmark_cache",
         enable_cache: bool = True,
     ) -> None:
-        """Initialize the benchmark suite with model, datasets, task, and cache settings.
+        """Initialize the benchmark suite with datasets, task, and cache settings.
 
         Args:
-            model: PyTorch representation learning model mapping (B, 1, T) to (B, T', C').
-            model_name: User-specified identifier for the representation model.
             dataset: Audio dataset returning samples and metadata for training.
             testset: Audio dataset returning samples and metadata for testing.
             task: Task to evaluate on (must be an instance of BaseTask).
@@ -115,12 +111,8 @@ class AudioBenchmark:
             enable_cache: Whether to use caching for computed representations.
 
         Raises:
-            TypeError: If task is not an instance of BaseTask, or if model/dataset/testset is None.
+            TypeError: If task is not an instance of BaseTask, or if dataset/testset is None.
         """
-        if model is None:
-            raise TypeError(
-                "model must be an instantiated torch.nn.Module instance, got None."
-            )
         if dataset is None:
             raise TypeError(
                 "dataset must be an instantiated Dataset instance, got None. "
@@ -158,8 +150,6 @@ class AudioBenchmark:
         task.validate_dataset(dataset)
         task.validate_dataset(testset)
 
-        self.model = model
-        self.model_name = model_name
         self.dataset = dataset
         self.testset = testset
         self.task = task
@@ -173,6 +163,8 @@ class AudioBenchmark:
 
     def _get_representations(
         self,
+        model: torch.nn.Module,
+        model_name: str,
         dataset: Dataset,
         resolved_name: str,
         batch_size: int,
@@ -185,13 +177,13 @@ class AudioBenchmark:
         if (
             self.enable_cache
             and not force_recompute
-            and self.cache.has(self.model_name, resolved_name)
+            and self.cache.has(model_name, resolved_name)
         ):
-            representations, metadata = self.cache.load(self.model_name, resolved_name)
+            representations, metadata = self.cache.load(model_name, resolved_name)
             cached = True
         else:
             if self.enable_cache:
-                entry_dir = self.cache.get_cache_path(self.model_name, resolved_name)
+                entry_dir = self.cache.get_cache_path(model_name, resolved_name)
                 temp_dir = entry_dir.with_name(f"{entry_dir.name}.tmp")
                 if temp_dir.exists():
                     shutil.rmtree(temp_dir)
@@ -199,7 +191,7 @@ class AudioBenchmark:
                 mmap_path = temp_dir / "representations.npy"
 
                 representations, metadata = extract_representations(
-                    model=self.model,
+                    model=model,
                     dataset=dataset,
                     batch_size=batch_size,
                     device=device,
@@ -209,14 +201,14 @@ class AudioBenchmark:
 
                 self.cache.commit_temp_dir(
                     temp_dir=temp_dir,
-                    model_name=self.model_name,
+                    model_name=model_name,
                     dataset_name=resolved_name,
                     metadata=metadata,
                     representations_shape=tuple(representations.shape),
                 )
             else:
                 representations, metadata = extract_representations(
-                    model=self.model,
+                    model=model,
                     dataset=dataset,
                     batch_size=batch_size,
                     device=device,
@@ -227,6 +219,8 @@ class AudioBenchmark:
 
     def run(
         self,
+        model: torch.nn.Module,
+        model_name: str,
         batch_size: int = 16,
         device: str | torch.device = "auto",
         force_recompute: bool = False,
@@ -235,6 +229,8 @@ class AudioBenchmark:
         """Run representation extraction and benchmark evaluation for a model on train and test datasets.
 
         Args:
+            model: PyTorch representation learning model mapping (B, 1, T) to (B, T', C').
+            model_name: User-specified identifier for the representation model.
             batch_size: Batch size for representation extraction.
             device: Device to run representation model on ('auto', 'cpu', 'cuda', etc.).
             force_recompute: If True, bypass cache and recompute representations.
@@ -242,8 +238,18 @@ class AudioBenchmark:
 
         Returns:
             BenchmarkResult: The result containing metrics and metadata.
+
+        Raises:
+            TypeError: If model is None.
         """
+        if model is None:
+            raise TypeError(
+                "model must be an instantiated torch.nn.Module instance, got None."
+            )
+
         train_reps, train_meta, train_cached = self._get_representations(
+            model=model,
+            model_name=model_name,
             dataset=self.dataset,
             resolved_name=self.resolved_dataset_name,
             batch_size=batch_size,
@@ -253,6 +259,8 @@ class AudioBenchmark:
         )
 
         test_reps, test_meta, test_cached = self._get_representations(
+            model=model,
+            model_name=model_name,
             dataset=self.testset,
             resolved_name=self.resolved_testset_name,
             batch_size=batch_size,
@@ -271,7 +279,7 @@ class AudioBenchmark:
         )
 
         return BenchmarkResult(
-            model_name=self.model_name,
+            model_name=model_name,
             dataset_name=self.resolved_dataset_name,
             task_name=self.task.name,
             metrics=metrics,

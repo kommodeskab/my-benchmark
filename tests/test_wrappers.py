@@ -272,8 +272,6 @@ def test_wrapper_chaining_and_task_execution():
         classifier=KNNBenchmarkClassifier(), label_key="frame_labels"
     )
     benchmark_vad = AudioBenchmark(
-        model=model,
-        model_name="test_model",
         dataset=ds_with_vad,
         testset=test_with_vad,
         task=vad_task,
@@ -281,6 +279,8 @@ def test_wrapper_chaining_and_task_execution():
         enable_cache=False,
     )
     vad_res = benchmark_vad.run(
+        model=model,
+        model_name="test_model",
         batch_size=4,
     )
     assert "accuracy" in vad_res.metrics
@@ -291,14 +291,15 @@ def test_wrapper_chaining_and_task_execution():
         probe=CTCSequenceProbe(epochs=5, batch_size=4), target_key="tokens"
     )
     benchmark_seq = AudioBenchmark(
-        model=model,
-        model_name="test_model",
         dataset=ds_with_vad,
         testset=test_with_vad,
         task=seq_task,
         cache_dir=".test_wrapper_cache",
         enable_cache=False,
     )
-    seq_res = benchmark_seq.run()
+    seq_res = benchmark_seq.run(
+        model=model,
+        model_name="test_model",
+    )
     assert "token_error_rate" in seq_res.metrics
     assert seq_res.metrics["token_error_rate"] >= 0.0

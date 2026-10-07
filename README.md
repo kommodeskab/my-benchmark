@@ -316,40 +316,34 @@ test_dataset = DummyAudioDataset(
     num_samples=16, audio_length=16000, num_classes=4, name="speech_test"
 )
 
-# 2. Initialize benchmarks with model, datasets, task, and cache settings
+# 2. Initialize benchmarks with datasets, task, and cache settings
 bench_clf = AudioBenchmark(
-    model=model,
-    model_name="my_model_v1",
     dataset=train_dataset,
     testset=test_dataset,
     task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
     cache_dir=".benchmark_cache",
     enable_cache=True,
 )
-res_clf = bench_clf.run()
+res_clf = bench_clf.run(model=model, model_name="my_model_v1")
 
 # Reuses cached representations automatically across tasks!
 bench_reg = AudioBenchmark(
-    model=model,
-    model_name="my_model_v1",
     dataset=train_dataset,
     testset=test_dataset,
     task=RegressionTask(regressor=LinearBenchmarkRegressor()),
     cache_dir=".benchmark_cache",
     enable_cache=True,
 )
-res_reg = bench_reg.run()
+res_reg = bench_reg.run(model=model, model_name="my_model_v1")
 
 bench_seq = AudioBenchmark(
-    model=model,
-    model_name="my_model_v1",
     dataset=train_dataset,
     testset=test_dataset,
     task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=10)),
     cache_dir=".benchmark_cache",
     enable_cache=True,
 )
-res_seq = bench_seq.run()
+res_seq = bench_seq.run(model=model, model_name="my_model_v1")
 
 # 4. Print summaries or inspect metrics
 for res in [res_clf, res_reg, res_seq]:
@@ -396,13 +390,11 @@ opt_clf = BayesOptClassifier(
 task_clf = GlobalClassificationTask(classifier=opt_clf)
 
 benchmark = AudioBenchmark(
-    model=my_model,
-    model_name="encoder",
     dataset=train_dataset,
     testset=test_dataset,
     task=task_clf,
 )
-result = benchmark.run()
+result = benchmark.run(model=my_model, model_name="encoder")
 
 # Benchmark reports standard metrics for the best model plus best hyperparameters:
 result.print_summary()

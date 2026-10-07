@@ -258,8 +258,6 @@ def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
     task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
 
     benchmark = AudioBenchmark(
-        model=model,
-        model_name="test_model",
         dataset=dataset,
         testset=testset,
         task=task,
@@ -267,7 +265,10 @@ def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
         enable_cache=False,
     )
 
-    result = benchmark.run()
+    result = benchmark.run(
+        model=model,
+        model_name="test_model",
+    )
 
     # Extra info populated from examine_data directly
     info = task.examine_data(dataset, testset)

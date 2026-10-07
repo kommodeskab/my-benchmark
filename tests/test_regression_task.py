@@ -120,8 +120,6 @@ def test_benchmark_runner_with_regression_task(tmp_path):
     task = RegressionTask(regressor=LinearBenchmarkRegressor())
 
     benchmark = AudioBenchmark(
-        model=model,
-        model_name="dummy_reg_model",
         dataset=train_dataset,
         testset=test_dataset,
         task=task,
@@ -130,6 +128,8 @@ def test_benchmark_runner_with_regression_task(tmp_path):
     )
 
     result = benchmark.run(
+        model=model,
+        model_name="dummy_reg_model",
         batch_size=4,
         device="cpu",
     )

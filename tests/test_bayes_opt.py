@@ -275,8 +275,6 @@ def test_bayes_opt_in_task_and_benchmark(tmp_path):
     task = GlobalClassificationTask(classifier=opt_classifier)
 
     benchmark = AudioBenchmark(
-        model=model,
-        model_name="dummy_opt_encoder",
         dataset=dataset,
         testset=testset,
         task=task,
@@ -285,6 +283,8 @@ def test_bayes_opt_in_task_and_benchmark(tmp_path):
     )
 
     result = benchmark.run(
+        model=model,
+        model_name="dummy_opt_encoder",
         batch_size=4,
         device="cpu",
     )
@@ -318,8 +318,6 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
     task = RegressionTask(regressor=opt_regressor, target_key="target")
 
     benchmark = AudioBenchmark(
-        model=model,
-        model_name="dummy_opt_reg_encoder",
         dataset=dataset,
         testset=testset,
         task=task,
@@ -328,6 +326,8 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
     )
 
     result = benchmark.run(
+        model=model,
+        model_name="dummy_opt_reg_encoder",
         batch_size=4,
         device="cpu",
     )
