@@ -33,8 +33,8 @@ Adhere strictly to the following principles:
 def evaluate_task(
     task: BaseTask,
     model: BaseClassifier,
-    test_size: float = 0.2,
-    random_state: int = 42,
+    dataset: Dataset,
+    testset: Dataset,
 ) -> TaskResult: ...
 
 

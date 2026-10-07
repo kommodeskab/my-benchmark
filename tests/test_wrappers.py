@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from audio_benchmark import (
     AudioBenchmark,
     BaseMetadataWrapper,
+    CTCSequenceProbe,
     DummyAudioDataset,
     DummyAudioModel,
     FrameClassificationTask,
@@ -229,9 +230,12 @@ def test_phoneme_wrapper_auto_transcribe_fallback():
 
 
 def test_wrapper_chaining_and_task_execution():
-    # 1. Create a dummy dataset
+    # 1. Create dummy datasets
     raw_dataset = DummyAudioDataset(
-        num_samples=10, audio_length=16000, name="wrapped_dummy"
+        num_samples=10, audio_length=16000, name="wrapped_dummy_train"
+    )
+    raw_testset = DummyAudioDataset(
+        num_samples=4, audio_length=16000, name="wrapped_dummy_test"
     )
 
     # 2. Chain wrappers together
@@ -244,7 +248,16 @@ def test_wrapper_chaining_and_task_execution():
     ds_with_phonemes = PhonemeWrapper(ds_with_text, drop_punctuation=True)
     ds_with_vad = VoiceActivityWrapper(ds_with_phonemes, method="energy", threshold=0.1)
 
+    test_with_text = WhisperTranscriptionWrapper(
+        raw_testset, transcribe_fn=mock_transcribe
+    )
+    test_with_phonemes = PhonemeWrapper(test_with_text, drop_punctuation=True)
+    test_with_vad = VoiceActivityWrapper(
+        test_with_phonemes, method="energy", threshold=0.1
+    )
+
     validate_dataset(ds_with_vad)
+    validate_dataset(test_with_vad)
 
     sample = ds_with_vad[0]
     assert "transcription" in sample["metadata"]
@@ -257,12 +270,13 @@ def test_wrapper_chaining_and_task_execution():
     benchmark = AudioBenchmark(cache_dir=".test_wrapper_cache", enable_cache=False)
 
     vad_task = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), label_key="frame_labels", test_size=0.3
+        classifier=KNNBenchmarkClassifier(), label_key="frame_labels"
     )
     vad_res = benchmark.run(
         model=model,
         model_name="test_model",
         dataset=ds_with_vad,
+        testset=test_with_vad,
         task=vad_task,
         batch_size=4,
     )
@@ -271,12 +285,13 @@ def test_wrapper_chaining_and_task_execution():
 
     # 4. Test SequenceModelingTask directly on the phoneme-annotated dataset
     seq_task = SequenceModelingTask(
-        method="ctc", target_key="tokens", epochs=5, batch_size=4
+        probe=CTCSequenceProbe(epochs=5, batch_size=4), target_key="tokens"
     )
     seq_res = benchmark.run(
         model=model,
         model_name="test_model",
         dataset=ds_with_vad,
+        testset=test_with_vad,
         task=seq_task,
     )
     assert "token_error_rate" in seq_res.metrics

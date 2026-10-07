@@ -6,7 +6,6 @@ from typing import Any
 import numpy as np
 import torch
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 
 from audio_benchmark.dataset import parse_dataset_item, validate_dataset
@@ -30,9 +29,6 @@ class FrameRegressionTask(BaseTask):
         regressor: BaseRegressor,
         name: str = "frame_regression",
         target_key: str = "frame_targets",
-        test_size: float = 0.2,
-        random_state: int = 42,
-        split_key: str | None = None,
         metric: str = "r2",
     ):
         """Initialize the FrameRegressionTask.
@@ -41,9 +37,6 @@ class FrameRegressionTask(BaseTask):
             regressor: Downstream regressor instance conforming to BaseRegressor.
             name: Identifier for the task.
             target_key: Metadata key containing the per-frame target sequence (length T).
-            test_size: Proportion of audio clips for testing.
-            random_state: Random seed for train/test split.
-            split_key: Optional metadata key ('train'/'test') for pre-defined splits.
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
         """
         super().__init__(name=name)
@@ -69,15 +62,11 @@ class FrameRegressionTask(BaseTask):
                 f"regressor must be an instantiated BaseRegressor instance, got {type(regressor).__name__}."
             )
         self.regressor = regressor
-        self.test_size = test_size
-        self.random_state = random_state
-        self.split_key = split_key
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that dataset metadata contains per-frame targets matching audio length T."""
         validate_dataset(dataset, required_metadata_keys=[self.target_key])
 
-        # Validate that the frame targets match audio length
         parsed = parse_dataset_item(dataset[0])
         audio_length = parsed["waveform"].shape[-1]
         targets = parsed["metadata"][self.target_key]
@@ -94,82 +83,76 @@ class FrameRegressionTask(BaseTask):
 
     def evaluate(
         self,
-        representations: torch.Tensor,
-        metadata: list[dict[str, Any]],
+        train_representations: torch.Tensor,
+        train_metadata: list[dict[str, Any]],
+        test_representations: torch.Tensor,
+        test_metadata: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Downsample frame targets to T' and evaluate downstream regressor.
 
         Args:
-            representations: Tensor of shape (N, T', C').
-            metadata: List of metadata dicts corresponding to each clip.
+            train_representations: Tensor of shape (N_train, T', C').
+            train_metadata: List of metadata dicts corresponding to each train clip.
+            test_representations: Tensor of shape (N_test, T', C').
+            test_metadata: List of metadata dicts corresponding to each test clip.
 
         Returns:
             dict[str, Any]: Frame-level regression metrics.
         """
-        if len(representations) != len(metadata):
+        if len(train_representations) != len(train_metadata):
             raise TaskError(
-                f"Length mismatch: {len(representations)} representations vs {len(metadata)} metadata entries."
+                f"Length mismatch: {len(train_representations)} train representations vs {len(train_metadata)} train metadata entries."
             )
-        if len(representations) == 0:
-            raise TaskError("No representations provided for evaluation.")
+        if len(test_representations) != len(test_metadata):
+            raise TaskError(
+                f"Length mismatch: {len(test_representations)} test representations vs {len(test_metadata)} test metadata entries."
+            )
+        if len(train_representations) == 0:
+            raise TaskError("No train representations provided for evaluation.")
+        if len(test_representations) == 0:
+            raise TaskError("No test representations provided for evaluation.")
 
-        num_clips, target_len, feature_dim = representations.shape
+        _, target_len_train, feature_dim = train_representations.shape
+        _, target_len_test, _ = test_representations.shape
 
-        # Downsample continuous targets for each clip from T to T' using mean
-        downsampled_targets_per_clip: list[np.ndarray] = []
-
-        for idx, meta in enumerate(metadata):
+        downsampled_train: list[np.ndarray] = []
+        for idx, meta in enumerate(train_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
-                    f"Sample at index {idx} metadata does not contain '{self.target_key}'."
+                    f"Train sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            raw_targets = meta[self.target_key]
             downsampled = downsample_sequence(
-                raw_targets, target_len=target_len, mode="mean"
+                meta[self.target_key], target_len=target_len_train, mode="mean"
             )
-            downsampled_targets_per_clip.append(downsampled)
+            downsampled_train.append(downsampled)
 
-        targets_per_clip = np.array(
-            downsampled_targets_per_clip, dtype=np.float32
-        )  # (N, T')
-        features_np = representations.detach().cpu().numpy()  # (N, T', C')
-
-        # Split at the clip level to avoid temporal leakage
-        clip_indices = np.arange(num_clips)
-        if self.split_key is not None and all(self.split_key in m for m in metadata):
-            train_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "train"
-            ]
-            test_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "test"
-            ]
-            if len(train_clips) == 0 or len(test_clips) == 0:
-                raise TaskError(
-                    f"Invalid train/test split via split_key '{self.split_key}': "
-                    f"{len(train_clips)} train clips, {len(test_clips)} test clips."
+        downsampled_test: list[np.ndarray] = []
+        for idx, meta in enumerate(test_metadata):
+            if self.target_key not in meta:
+                raise InvalidDatasetError(
+                    f"Test sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-        else:
-            train_clips, test_clips = train_test_split(
-                clip_indices, test_size=self.test_size, random_state=self.random_state
+            downsampled = downsample_sequence(
+                meta[self.target_key], target_len=target_len_test, mode="mean"
             )
+            downsampled_test.append(downsampled)
 
-        # Flatten frames for training and testing
-        X_train = features_np[train_clips].reshape(-1, feature_dim)
-        y_train = targets_per_clip[train_clips].reshape(-1)
+        targets_train = np.array(downsampled_train, dtype=np.float32)
+        targets_test = np.array(downsampled_test, dtype=np.float32)
 
-        X_test = features_np[test_clips].reshape(-1, feature_dim)
-        y_test = targets_per_clip[test_clips].reshape(-1)
+        X_train = train_representations.detach().cpu().numpy().reshape(-1, feature_dim)
+        y_train = targets_train.reshape(-1)
 
-        # Regressor instance
+        X_test = test_representations.detach().cpu().numpy().reshape(-1, feature_dim)
+        y_test = targets_test.reshape(-1)
+
         regressor_inst = self.regressor
         regressor_name = regressor_inst.__class__.__name__
 
-        # Fit regressor with timing
         start_time = time.perf_counter()
         regressor_inst.fit(X_train, y_train)
         training_time = float(time.perf_counter() - start_time)
 
-        # Evaluate on test frames
         metrics = regressor_inst.evaluate(X_test, y_test)
         train_metrics = regressor_inst.evaluate(X_train, y_train)
 
@@ -196,84 +179,78 @@ class FrameRegressionTask(BaseTask):
 
         return results
 
-    def examine_data(self, dataset: Dataset) -> dict[str, Any]:
+    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
         """Examine the dataset in the context of frame regression.
 
-        Validates the dataset, computes frame target distributions and train/test splits,
+        Validates the datasets, computes frame target distributions across train and test sets,
         and computes a trivial baseline (frame target mean predictor) expected metric.
 
         Args:
-            dataset: Audio dataset to examine.
+            dataset: Audio dataset to examine for training.
+            testset: Optional audio dataset to examine for testing.
 
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
         self._validate_for_examination(dataset, [self.target_key])
-        metadata = self.extract_metadata(dataset)
+        train_metadata = self.extract_metadata(dataset)
 
-        if len(metadata) == 0:
+        if testset is not None:
+            self._validate_for_examination(testset, [self.target_key])
+            test_metadata = self.extract_metadata(testset)
+        else:
+            test_metadata = train_metadata
+
+        if len(train_metadata) == 0:
             raise TaskError("Cannot examine an empty dataset.")
 
-        total_clips = len(metadata)
-        frame_lengths = []
-        all_targets = []
-
-        for idx, meta in enumerate(metadata):
+        train_targets = []
+        for idx, meta in enumerate(train_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            targets = meta[self.target_key]
-            frame_lengths.append(len(targets))
-            try:
-                all_targets.extend([float(t) for t in targets])
-            except (ValueError, TypeError) as e:
-                raise TaskError(
-                    f"Sample at index {idx} frame target cannot be converted to float: {e}"
-                ) from e
+            for t in meta[self.target_key]:
+                try:
+                    train_targets.append(float(t))
+                except (ValueError, TypeError) as e:
+                    raise TaskError(
+                        f"Sample at index {idx} frame target cannot be converted to float: {e}"
+                    ) from e
 
-        all_targets_np = np.array(all_targets, dtype=np.float32)
-        clip_indices = np.arange(total_clips)
-
-        if self.split_key is not None and all(self.split_key in m for m in metadata):
-            train_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "train"
-            ]
-            test_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "test"
-            ]
-            if len(train_clips) == 0 or len(test_clips) == 0:
-                raise TaskError(
-                    f"Invalid train/test split via split_key '{self.split_key}': "
-                    f"{len(train_clips)} train clips, {len(test_clips)} test clips."
+        test_targets = []
+        for idx, meta in enumerate(test_metadata):
+            if self.target_key not in meta:
+                raise InvalidDatasetError(
+                    f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-        else:
-            train_clips, test_clips = train_test_split(
-                clip_indices, test_size=self.test_size, random_state=self.random_state
-            )
+            for t in meta[self.target_key]:
+                try:
+                    test_targets.append(float(t))
+                except (ValueError, TypeError) as e:
+                    raise TaskError(
+                        f"Sample at index {idx} frame target cannot be converted to float: {e}"
+                    ) from e
 
-        train_frames_count = sum(frame_lengths[i] for i in train_clips)
-        test_frames_count = sum(frame_lengths[i] for i in test_clips)
-        total_frames = len(all_targets)
-        frame_len_sample = frame_lengths[0] if frame_lengths else 0
-
-        train_targets = np.array(
-            [float(t) for i in train_clips for t in metadata[i][self.target_key]],
-            dtype=np.float32,
-        )
-        test_targets = np.array(
-            [float(t) for i in test_clips for t in metadata[i][self.target_key]],
-            dtype=np.float32,
+        train_targets_np = np.array(train_targets, dtype=np.float32)
+        test_targets_np = np.array(test_targets, dtype=np.float32)
+        all_targets = (
+            np.concatenate([train_targets_np, test_targets_np])
+            if testset is not None
+            else train_targets_np
         )
 
-        train_mean = float(np.mean(train_targets))
-        y_pred_baseline = np.full_like(test_targets, train_mean)
+        frame_len_sample = (
+            len(train_metadata[0][self.target_key]) if train_metadata else 0
+        )
+        train_mean = float(np.mean(train_targets_np))
+        y_pred_baseline = np.full_like(test_targets_np, train_mean)
 
-        baseline_mse = float(mean_squared_error(test_targets, y_pred_baseline))
+        baseline_mse = float(mean_squared_error(test_targets_np, y_pred_baseline))
         baseline_rmse = float(np.sqrt(baseline_mse))
-        baseline_mae = float(mean_absolute_error(test_targets, y_pred_baseline))
+        baseline_mae = float(mean_absolute_error(test_targets_np, y_pred_baseline))
         try:
-            baseline_r2 = float(r2_score(test_targets, y_pred_baseline))
+            baseline_r2 = float(r2_score(test_targets_np, y_pred_baseline))
         except (ValueError, ZeroDivisionError):
             baseline_r2 = 0.0
 
@@ -292,18 +269,20 @@ class FrameRegressionTask(BaseTask):
 
         return {
             "task": self.name,
-            "total_clips": int(total_clips),
-            "train_clips": len(train_clips),
-            "test_clips": len(test_clips),
+            "total_clips": len(train_metadata)
+            + (len(test_metadata) if testset is not None else 0),
+            "train_clips": len(train_metadata),
+            "test_clips": len(test_metadata) if testset is not None else 0,
             "frame_length": int(frame_len_sample),
-            "total_frames": int(total_frames),
-            "train_frames": int(train_frames_count),
-            "test_frames": int(test_frames_count),
+            "total_frames": len(train_targets)
+            + (len(test_targets) if testset is not None else 0),
+            "train_frames": len(train_targets),
+            "test_frames": len(test_targets) if testset is not None else 0,
             "target_key": self.target_key,
-            "target_min": float(np.min(all_targets_np)),
-            "target_max": float(np.max(all_targets_np)),
-            "target_mean": float(np.mean(all_targets_np)),
-            "target_std": float(np.std(all_targets_np)),
+            "target_min": float(np.min(all_targets)),
+            "target_max": float(np.max(all_targets)),
+            "target_mean": float(np.mean(all_targets)),
+            "target_std": float(np.std(all_targets)),
             "baseline_strategy": "mean_predictor",
             "baseline_metric": self.metric,
             "baseline_value": float(baseline_value),

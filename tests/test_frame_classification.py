@@ -30,24 +30,19 @@ class MismatchedFrameDataset(Dataset):
 
 
 def test_frame_classification_with_knn_and_mlp():
-    task_linear = FrameClassificationTask(
-        classifier=LinearBenchmarkClassifier(), test_size=0.25, random_state=42
-    )
-    task_knn = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), test_size=0.25, random_state=42
-    )
+    task_linear = FrameClassificationTask(classifier=LinearBenchmarkClassifier())
+    task_knn = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
     task_mlp = FrameClassificationTask(
         classifier=MLPBenchmarkClassifier(epochs=1, device="cpu"),
-        test_size=0.25,
-        random_state=42,
     )
 
-    # 8 clips, each representation sequence length 4, dim 8
-    reps = torch.randn(8, 4, 8)
-    # Original audio had 16 frames, downsampled to 4
-    meta = [{"frame_labels": [i % 2] * 16} for i in range(8)]
+    # 6 train clips, 2 test clips, each representation sequence length 4, dim 8
+    train_reps = torch.randn(6, 4, 8)
+    train_meta = [{"frame_labels": [i % 2] * 16} for i in range(6)]
+    test_reps = torch.randn(2, 4, 8)
+    test_meta = [{"frame_labels": [i % 2] * 16} for i in range(2)]
 
-    info = task_knn.examine_data(meta)
+    info = task_knn.examine_data(train_meta, test_meta)
     assert info["train_clips"] == 6
     assert info["test_clips"] == 2
     assert info["frame_length"] == 16
@@ -59,7 +54,7 @@ def test_frame_classification_with_knn_and_mlp():
     assert 0.0 <= info["baseline_value"] <= 1.0
 
     for task in (task_linear, task_knn, task_mlp):
-        res = task.evaluate(reps, meta)
+        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
         assert "train_clips" not in res
         assert "test_clips" not in res
         assert "train_frames" not in res
@@ -81,36 +76,18 @@ def test_frame_classification_dataset_validation():
         task.validate_dataset(bad_ds)
 
 
-def test_frame_classification_with_split_key():
-    task = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), split_key="split"
-    )
-    reps = torch.randn(6, 3, 8)
-    meta = []
-    for i in range(6):
-        split = "train" if i < 4 else "test"
-        meta.append({"frame_labels": [i % 2] * 12, "split": split})
-
-    info = task.examine_data(meta)
-    assert info["train_clips"] == 4
-    assert info["test_clips"] == 2
-
-    res = task.evaluate(reps, meta)
-    assert "train_clips" not in res
-    assert "train_frames" not in res
-
-
 def test_benchmark_runner_with_frame_classification(tmp_path):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
-    # DummyAudioDataset generates frame_labels of length audio_length
-    dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
+    train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
+    test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
     task = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
 
     result = benchmark.run(
         model=model,
         model_name="dummy_frame_clf_model",
-        dataset=dataset,
+        dataset=train_dataset,
+        testset=test_dataset,
         task=task,
         batch_size=4,
         device="cpu",
@@ -119,8 +96,10 @@ def test_benchmark_runner_with_frame_classification(tmp_path):
     assert result.task_name == "frame_classification"
     assert "accuracy" in result.metrics
     assert "T_orig" not in result.metrics
-    assert result.extra_info["frame_length"] == 320
-    assert result.extra_info["train_clips"] == 6
+    info = task.examine_data(train_dataset, test_dataset)
+    assert info["frame_length"] == 320
+    assert info["train_clips"] == 8
+    assert info["test_clips"] == 4
 
 
 def test_frame_classification_string_classifier_raises():

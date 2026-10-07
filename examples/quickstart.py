@@ -8,6 +8,7 @@ This script demonstrates:
 
 from audio_benchmark import (
     AudioBenchmark,
+    CTCSequenceProbe,
     DummyAudioDataset,
     DummyAudioModel,
     FrameClassificationTask,
@@ -19,6 +20,7 @@ from audio_benchmark import (
     SequenceModelingTask,
     TransformerBenchmarkClassifier,
     TransformerBenchmarkRegressor,
+    TransformerDecoderProbe,
 )
 
 
@@ -31,7 +33,13 @@ def main():
         num_samples=40,
         audio_length=16000,  # 1 second of audio at 16kHz
         num_classes=4,
-        name="synthetic_speech_v1",
+        name="synthetic_speech_train",
+    )
+    testset = DummyAudioDataset(
+        num_samples=16,
+        audio_length=16000,
+        num_classes=4,
+        name="synthetic_speech_test",
     )
 
     benchmark = AudioBenchmark(cache_dir=".benchmark_cache", enable_cache=True)
@@ -42,6 +50,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
+        testset=testset,
         task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
         batch_size=16,
     )
@@ -50,6 +59,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
+        testset=testset,
         task=RegressionTask(regressor=LinearBenchmarkRegressor()),
     )
 
@@ -57,6 +67,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
+        testset=testset,
         task=GlobalClassificationTask(
             classifier=TransformerBenchmarkClassifier(epochs=15)
         ),
@@ -66,6 +77,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
+        testset=testset,
         task=RegressionTask(regressor=TransformerBenchmarkRegressor(epochs=15)),
     )
 
@@ -73,6 +85,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
+        testset=testset,
         task=FrameClassificationTask(classifier=KNNBenchmarkClassifier()),
     )
 
@@ -80,6 +93,7 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
+        testset=testset,
         task=FrameRegressionTask(regressor=LinearBenchmarkRegressor()),
     )
 
@@ -87,14 +101,16 @@ def main():
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=SequenceModelingTask(method="ctc", epochs=15),
+        testset=testset,
+        task=SequenceModelingTask(probe=CTCSequenceProbe(epochs=15)),
     )
 
     result_seq_tf = benchmark.run(
         model=model,
         model_name=model_name,
         dataset=dataset,
-        task=SequenceModelingTask(method="transformer", epochs=15),
+        testset=testset,
+        task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=15)),
     )
     print("All tasks finished successfully.\n")
 

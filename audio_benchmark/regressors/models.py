@@ -9,9 +9,13 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 from torch import nn
-from tqdm import tqdm
 
-from audio_benchmark.utils import PositionalEncoding, resolve_device, to_numpy
+from audio_benchmark.utils import (
+    PositionalEncoding,
+    resolve_device,
+    to_numpy,
+    train_torch_model,
+)
 
 
 class BaseRegressor(ABC):
@@ -328,37 +332,19 @@ class MLPBenchmarkRegressor(BaseRegressor):
             num_layers=self.num_layers,
         ).to(self.device)
 
-        dataset = torch.utils.data.TensorDataset(X_t, y_norm)
-        loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True
-        )
-
-        optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-        criterion = nn.MSELoss()
-
-        self.model.train()
-        epoch_iter = tqdm(
-            range(self.epochs),
+        train_torch_model(
+            model=self.model,
+            X=X_t,
+            y=y_norm,
+            criterion=nn.MSELoss(),
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+            device=self.device,
+            show_progress=self.show_progress,
             desc="Training MLPRegressor",
-            disable=not self.show_progress,
-            leave=False,
         )
-        for _ in epoch_iter:
-            running_loss = 0.0
-            for batch_x, batch_y in loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                optimizer.zero_grad()
-                preds = self.model(batch_x)
-                loss = criterion(preds, batch_y)
-                loss.backward()
-                optimizer.step()
-                running_loss += float(loss.item())
-            epoch_iter.set_postfix(
-                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
-            )
-
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
@@ -561,37 +547,19 @@ class TransformerBenchmarkRegressor(BaseRegressor):
             aggregation=self.aggregation,
         ).to(self.device)
 
-        dataset = torch.utils.data.TensorDataset(X_t, y_norm)
-        loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True
-        )
-
-        optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-        criterion = nn.MSELoss()
-
-        self.model.train()
-        epoch_iter = tqdm(
-            range(self.epochs),
+        train_torch_model(
+            model=self.model,
+            X=X_t,
+            y=y_norm,
+            criterion=nn.MSELoss(),
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+            device=self.device,
+            show_progress=self.show_progress,
             desc="Training TransformerRegressor",
-            disable=not self.show_progress,
-            leave=False,
         )
-        for _ in epoch_iter:
-            running_loss = 0.0
-            for batch_x, batch_y in loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                optimizer.zero_grad()
-                preds = self.model(batch_x)
-                loss = criterion(preds, batch_y)
-                loss.backward()
-                optimizer.step()
-                running_loss += float(loss.item())
-            epoch_iter.set_postfix(
-                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
-            )
-
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:

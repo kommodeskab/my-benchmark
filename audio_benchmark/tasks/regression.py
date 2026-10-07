@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import torch
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 
 from audio_benchmark.dataset import validate_dataset
@@ -31,9 +30,6 @@ class RegressionTask(BaseTask):
         name: str = "regression",
         target_key: str = "target",
         pooling: str | Callable[[torch.Tensor], torch.Tensor] = "mean",
-        test_size: float = 0.2,
-        random_state: int = 42,
-        split_key: str | None = None,
         metric: str = "r2",
     ):
         """Initialize the RegressionTask.
@@ -44,9 +40,6 @@ class RegressionTask(BaseTask):
             target_key: Key in the sample metadata dictionary containing the regression target.
             pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last',
                 or a callable f(representations) -> pooled_tensor.
-            test_size: Proportion of samples to use for test split if split_key is not used.
-            random_state: Random seed for train/test split.
-            split_key: Optional metadata key (e.g. 'split') specifying 'train' or 'test'.
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
         """
         super().__init__(name=name)
@@ -73,9 +66,6 @@ class RegressionTask(BaseTask):
             )
         self.regressor = regressor
         self.pooling = pooling
-        self.test_size = test_size
-        self.random_state = random_state
-        self.split_key = split_key
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that the dataset metadata contains the expected target_key."""
@@ -87,84 +77,82 @@ class RegressionTask(BaseTask):
 
     def evaluate(
         self,
-        representations: torch.Tensor,
-        metadata: list[dict[str, Any]],
+        train_representations: torch.Tensor,
+        train_metadata: list[dict[str, Any]],
+        test_representations: torch.Tensor,
+        test_metadata: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Train downstream regressor on pooled representations and return evaluation metrics.
 
         Args:
-            representations: Computed representations of shape (N, T', C').
-            metadata: List of metadata dicts corresponding to each sample.
+            train_representations: Computed train representations of shape (N_train, T', C').
+            train_metadata: List of metadata dicts corresponding to each train sample.
+            test_representations: Computed test representations of shape (N_test, T', C').
+            test_metadata: List of metadata dicts corresponding to each test sample.
 
         Returns:
             dict[str, Any]: Dictionary of evaluation results.
         """
-        if len(representations) != len(metadata):
+        if len(train_representations) != len(train_metadata):
             raise TaskError(
-                f"Length mismatch: {len(representations)} representations vs {len(metadata)} metadata entries."
+                f"Length mismatch: {len(train_representations)} train representations vs {len(train_metadata)} train metadata entries."
             )
+        if len(test_representations) != len(test_metadata):
+            raise TaskError(
+                f"Length mismatch: {len(test_representations)} test representations vs {len(test_metadata)} test metadata entries."
+            )
+        if len(train_representations) == 0:
+            raise TaskError("No train representations provided for evaluation.")
+        if len(test_representations) == 0:
+            raise TaskError("No test representations provided for evaluation.")
 
-        if len(representations) == 0:
-            raise TaskError("No representations provided for evaluation.")
-
-        # Extract continuous targets
-        raw_targets = []
-        for i, meta in enumerate(metadata):
+        raw_train_targets = []
+        for i, meta in enumerate(train_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
-                    f"Sample at index {i} metadata does not contain target key '{self.target_key}'."
+                    f"Train sample at index {i} metadata does not contain target key '{self.target_key}'."
                 )
             try:
-                raw_targets.append(float(meta[self.target_key]))
+                raw_train_targets.append(float(meta[self.target_key]))
             except (ValueError, TypeError) as e:
                 raise TaskError(
-                    f"Sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
+                    f"Train sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
                 ) from e
 
-        targets = np.array(raw_targets, dtype=np.float32)
+        raw_test_targets = []
+        for i, meta in enumerate(test_metadata):
+            if self.target_key not in meta:
+                raise InvalidDatasetError(
+                    f"Test sample at index {i} metadata does not contain target key '{self.target_key}'."
+                )
+            try:
+                raw_test_targets.append(float(meta[self.target_key]))
+            except (ValueError, TypeError) as e:
+                raise TaskError(
+                    f"Test sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
+                ) from e
 
-        # Regressor instance
+        y_train = np.array(raw_train_targets, dtype=np.float32)
+        y_test = np.array(raw_test_targets, dtype=np.float32)
+
         regressor_inst = self.regressor
         regressor_name = regressor_inst.__class__.__name__
 
         is_sequence_probe = getattr(regressor_inst, "accepts_sequence", False)
         if is_sequence_probe:
-            features = representations.detach().cpu().numpy()
+            X_train = train_representations.detach().cpu().numpy()
+            X_test = test_representations.detach().cpu().numpy()
             pooling_name = "none (transformer)"
         else:
-            features = self.pool_representations(representations)
+            X_train = self.pool_representations(train_representations)
+            X_test = self.pool_representations(test_representations)
             pooling_name = self.pooling if isinstance(self.pooling, str) else "custom"
 
-        # Handle train/test split
-        if self.split_key is not None and all(self.split_key in m for m in metadata):
-            train_mask = np.array([m[self.split_key] == "train" for m in metadata])
-            test_mask = np.array([m[self.split_key] == "test" for m in metadata])
-
-            X_train, y_train = features[train_mask], targets[train_mask]
-            X_test, y_test = features[test_mask], targets[test_mask]
-
-            if len(X_train) == 0 or len(X_test) == 0:
-                raise TaskError(
-                    f"Invalid train/test split via split_key '{self.split_key}': "
-                    f"{len(X_train)} train samples, {len(X_test)} test samples."
-                )
-        else:
-            X_train, X_test, y_train, y_test = train_test_split(
-                features,
-                targets,
-                test_size=self.test_size,
-                random_state=self.random_state,
-            )
-
-        # Fit regressor with timing
         start_time = time.perf_counter()
         regressor_inst.fit(X_train, y_train)
         training_time = float(time.perf_counter() - start_time)
 
-        # Evaluate on test set
         metrics = regressor_inst.evaluate(X_test, y_test)
-
-        # Evaluate on train set for reference
         train_metrics = regressor_inst.evaluate(X_train, y_train)
 
         results = {
@@ -191,62 +179,63 @@ class RegressionTask(BaseTask):
 
         return results
 
-    def examine_data(self, dataset: Dataset) -> dict[str, Any]:
+    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
         """Examine the dataset in the context of global regression.
 
-        Validates the dataset, checks target distribution and train/test splits,
+        Validates the datasets, checks target distributions across train and test sets,
         and computes a trivial baseline (mean predictor) expected metric.
 
         Args:
-            dataset: Audio dataset to examine.
+            dataset: Audio dataset to examine for training.
+            testset: Optional audio dataset to examine for testing.
 
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
         self._validate_for_examination(dataset, [self.target_key])
-        metadata = self.extract_metadata(dataset)
+        train_metadata = self.extract_metadata(dataset)
 
-        if len(metadata) == 0:
+        if testset is not None:
+            self._validate_for_examination(testset, [self.target_key])
+            test_metadata = self.extract_metadata(testset)
+        else:
+            test_metadata = train_metadata
+
+        if len(train_metadata) == 0:
             raise TaskError("Cannot examine an empty dataset.")
 
-        raw_targets = []
-        for i, meta in enumerate(metadata):
+        raw_train_targets = []
+        for i, meta in enumerate(train_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
                     f"Sample at index {i} metadata does not contain target key '{self.target_key}'."
                 )
             try:
-                raw_targets.append(float(meta[self.target_key]))
+                raw_train_targets.append(float(meta[self.target_key]))
             except (ValueError, TypeError) as e:
                 raise TaskError(
                     f"Sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
                 ) from e
 
-        targets = np.array(raw_targets, dtype=np.float32)
-        indices = np.arange(len(targets))
-
-        if self.split_key is not None and all(self.split_key in m for m in metadata):
-            train_mask = np.array([m[self.split_key] == "train" for m in metadata])
-            test_mask = np.array([m[self.split_key] == "test" for m in metadata])
-            train_indices = indices[train_mask]
-            test_indices = indices[test_mask]
-            if len(train_indices) == 0 or len(test_indices) == 0:
-                raise TaskError(
-                    f"Invalid train/test split via split_key '{self.split_key}': "
-                    f"{len(train_indices)} train samples, {len(test_indices)} test samples."
+        raw_test_targets = []
+        for i, meta in enumerate(test_metadata):
+            if self.target_key not in meta:
+                raise InvalidDatasetError(
+                    f"Sample at index {i} metadata does not contain target key '{self.target_key}'."
                 )
-        else:
-            train_indices, test_indices = train_test_split(
-                indices,
-                test_size=self.test_size,
-                random_state=self.random_state,
-            )
+            try:
+                raw_test_targets.append(float(meta[self.target_key]))
+            except (ValueError, TypeError) as e:
+                raise TaskError(
+                    f"Sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
+                ) from e
 
-        y_train = targets[train_indices]
-        y_test = targets[test_indices]
+        y_train = np.array(raw_train_targets, dtype=np.float32)
+        y_test = np.array(raw_test_targets, dtype=np.float32)
+
         train_mean = float(np.mean(y_train))
-
         y_pred_baseline = np.full_like(y_test, train_mean)
+
         baseline_mse = float(mean_squared_error(y_test, y_pred_baseline))
         baseline_rmse = float(np.sqrt(baseline_mse))
         baseline_mae = float(mean_absolute_error(y_test, y_pred_baseline))
@@ -270,14 +259,15 @@ class RegressionTask(BaseTask):
 
         return {
             "task": self.name,
-            "total_samples": len(dataset),
-            "train_samples": len(train_indices),
-            "test_samples": len(test_indices),
+            "total_samples": len(train_metadata)
+            + (len(test_metadata) if testset is not None else 0),
+            "train_samples": len(train_metadata),
+            "test_samples": len(test_metadata) if testset is not None else 0,
             "target_key": self.target_key,
-            "target_min": float(np.min(targets)),
-            "target_max": float(np.max(targets)),
-            "target_mean": float(np.mean(targets)),
-            "target_std": float(np.std(targets)),
+            "target_min": float(np.min(y_train)),
+            "target_max": float(np.max(y_train)),
+            "target_mean": float(np.mean(y_train)),
+            "target_std": float(np.std(y_train)),
             "baseline_strategy": "mean_predictor",
             "baseline_metric": self.metric,
             "baseline_value": float(baseline_value),

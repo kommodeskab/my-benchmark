@@ -6,9 +6,11 @@ from torch.utils.data import Dataset
 
 from audio_benchmark import (
     AudioBenchmark,
+    CTCSequenceProbe,
     DummyAudioDataset,
     DummyAudioModel,
     SequenceModelingTask,
+    TransformerDecoderProbe,
     compute_token_error_rate,
     levenshtein_distance,
 )
@@ -103,25 +105,31 @@ class EmptySequenceDataset(Dataset):
         }
 
 
-def test_invalid_method_raises():
-    with pytest.raises(ValueError, match="Unknown sequence modeling method"):
-        SequenceModelingTask(method="rnn")
+def test_invalid_probe_raises():
+    with pytest.raises(
+        TypeError, match="probe must be an instance of BaseSequenceProbe"
+    ):
+        SequenceModelingTask(probe="ctc")
+    with pytest.raises(
+        TypeError, match="Passing None as a sequence probe is not allowed"
+    ):
+        SequenceModelingTask(probe=None)
 
 
 def test_dataset_validation_missing_key():
-    task = SequenceModelingTask(target_key="tokens")
+    task = SequenceModelingTask(probe=CTCSequenceProbe(), target_key="tokens")
     with pytest.raises(InvalidDatasetError, match="missing required key"):
         task.validate_dataset(MissingKeyDataset())
 
 
 def test_dataset_validation_non_sequence():
-    task = SequenceModelingTask(target_key="tokens")
+    task = SequenceModelingTask(probe=CTCSequenceProbe(), target_key="tokens")
     with pytest.raises(InvalidDatasetError, match="must be a sequence"):
         task.validate_dataset(NonSequenceDataset())
 
 
 def test_dataset_validation_empty_sequence():
-    task = SequenceModelingTask(target_key="tokens")
+    task = SequenceModelingTask(probe=CTCSequenceProbe(), target_key="tokens")
     with pytest.raises(InvalidDatasetError, match="empty sequence"):
         task.validate_dataset(EmptySequenceDataset())
 
@@ -132,23 +140,24 @@ def test_dataset_validation_empty_sequence():
 
 
 def test_sequence_modeling_ctc():
-    task = SequenceModelingTask(
-        method="ctc",
-        test_size=0.25,
-        random_state=42,
+    probe = CTCSequenceProbe(
         epochs=1,
         batch_size=4,
         device="cpu",
     )
+    task = SequenceModelingTask(probe=probe)
 
-    # 8 clips, representations (B=8, T'=10, C'=16)
-    reps = torch.randn(8, 10, 16)
-    meta = [
-        {"tokens": [f"tok_{(i + k) % 3}" for k in range(2 + (i % 2))]} for i in range(8)
+    train_reps = torch.randn(6, 10, 16)
+    train_meta = [
+        {"tokens": [f"tok_{(i + k) % 3}" for k in range(2 + (i % 2))]} for i in range(6)
+    ]
+    test_reps = torch.randn(2, 10, 16)
+    test_meta = [
+        {"tokens": [f"tok_{(i + k) % 3}" for k in range(2 + (i % 2))]} for i in range(2)
     ]
 
     # Test examine_data
-    info = task.examine_data(meta)
+    info = task.examine_data(train_meta, test_meta)
     assert info["train_clips"] == 6
     assert info["test_clips"] == 2
     assert info["vocab_size"] == 3
@@ -158,9 +167,9 @@ def test_sequence_modeling_ctc():
     assert info["baseline_token_error_rate"] == 1.0
     assert info["baseline_sequence_accuracy"] == 0.0
 
-    res = task.evaluate(reps, meta)
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
     assert res["task"] == "sequence_modeling"
-    assert res["method"] == "ctc"
+    assert res["probe"] == "CTCSequenceProbe"
     assert "train_clips" not in res
     assert "test_clips" not in res
     assert "vocab_size" not in res
@@ -171,29 +180,29 @@ def test_sequence_modeling_ctc():
 
 
 def test_sequence_modeling_transformer():
-    task = SequenceModelingTask(
-        method="transformer",
-        test_size=0.25,
-        random_state=42,
+    probe = TransformerDecoderProbe(
+        d_model=16,
+        nhead=2,
+        num_layers=1,
+        dim_feedforward=32,
         epochs=1,
         batch_size=4,
         device="cpu",
-        model_kwargs={
-            "d_model": 16,
-            "nhead": 2,
-            "num_layers": 1,
-            "dim_feedforward": 32,
-        },
     )
+    task = SequenceModelingTask(probe=probe)
 
-    reps = torch.randn(8, 10, 16)
-    meta = [
-        {"tokens": [f"tok_{(i + k) % 3}" for k in range(2 + (i % 2))]} for i in range(8)
+    train_reps = torch.randn(6, 10, 16)
+    train_meta = [
+        {"tokens": [f"tok_{(i + k) % 3}" for k in range(2 + (i % 2))]} for i in range(6)
+    ]
+    test_reps = torch.randn(2, 10, 16)
+    test_meta = [
+        {"tokens": [f"tok_{(i + k) % 3}" for k in range(2 + (i % 2))]} for i in range(2)
     ]
 
-    res = task.evaluate(reps, meta)
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
     assert res["task"] == "sequence_modeling"
-    assert res["method"] == "transformer"
+    assert res["probe"] == "TransformerDecoderProbe"
     assert "train_clips" not in res
     assert "test_clips" not in res
     assert "vocab_size" not in res
@@ -203,22 +212,6 @@ def test_sequence_modeling_transformer():
     assert res["training_time"] >= 0.0
 
 
-def test_sequence_modeling_split_key():
-    task = SequenceModelingTask(method="ctc", split_key="split", epochs=1, device="cpu")
-    reps = torch.randn(6, 10, 16)
-    meta = [
-        {"tokens": ["a", "b"], "split": "train" if i < 4 else "test"} for i in range(6)
-    ]
-
-    info = task.examine_data(meta)
-    assert info["train_clips"] == 4
-    assert info["test_clips"] == 2
-
-    res = task.evaluate(reps, meta)
-    assert "train_clips" not in res
-    assert "test_clips" not in res
-
-
 # ==============================================================================
 # 4. Benchmark Suite Integration Tests
 # ==============================================================================
@@ -226,15 +219,18 @@ def test_sequence_modeling_split_key():
 
 def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
-    dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
+    train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
+    test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
 
-    # CTC method
-    task_ctc = SequenceModelingTask(method="ctc", epochs=1, batch_size=4, device="cpu")
+    # CTC probe
+    probe_ctc = CTCSequenceProbe(epochs=1, batch_size=4, device="cpu")
+    task_ctc = SequenceModelingTask(probe=probe_ctc)
     res_ctc = benchmark.run(
         model=model,
         model_name="dummy_seq_model",
-        dataset=dataset,
+        dataset=train_dataset,
+        testset=test_dataset,
         task=task_ctc,
         device="cpu",
     )
@@ -242,23 +238,22 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
     assert "token_error_rate" in res_ctc.metrics
     assert "sequence_accuracy" in res_ctc.metrics
 
-    # Transformer method
-    task_tf = SequenceModelingTask(
-        method="transformer",
+    # Transformer probe
+    probe_tf = TransformerDecoderProbe(
+        d_model=16,
+        nhead=2,
+        num_layers=1,
+        dim_feedforward=32,
         epochs=1,
         batch_size=4,
         device="cpu",
-        model_kwargs={
-            "d_model": 16,
-            "nhead": 2,
-            "num_layers": 1,
-            "dim_feedforward": 32,
-        },
     )
+    task_tf = SequenceModelingTask(probe=probe_tf)
     res_tf = benchmark.run(
         model=model,
         model_name="dummy_seq_model",
-        dataset=dataset,
+        dataset=train_dataset,
+        testset=test_dataset,
         task=task_tf,
         device="cpu",
     )
@@ -270,6 +265,5 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
     res_ctc.print_summary()
     res_tf.print_summary()
     captured = capsys.readouterr()
-    assert "Token Error Rate:" in captured.out
-    assert "Sequence Acc:" in captured.out
-    assert "Vocab Size:" in captured.out
+    assert "token_error_rate" in captured.out
+    assert "sequence_accuracy" in captured.out

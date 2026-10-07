@@ -102,8 +102,6 @@ Classifies a single categorical label for the entire audio clip.
   - `classifier` (`BaseClassifier`, required): An explicit instantiated classifier model (e.g., `LinearBenchmarkClassifier()`, `KNNBenchmarkClassifier()`, `MLPBenchmarkClassifier()`, `TransformerBenchmarkClassifier()`, or `BayesOptClassifier(...)`). Passing `None` is not allowed.
   - `label_key` (`str`, default `"label"`): Key in sample metadata containing the ground truth label.
   - `pooling` (`str`, default `"mean"`): Temporal pooling method for classifiers that do not accept 3D sequence tensors (`"mean"`, `"max"`, `"first"`, `"last"`). Bypassed when using sequence models like `TransformerBenchmarkClassifier`.
-  - `test_size` (`float`, default `0.2`): Fraction of dataset reserved for testing.
-  - `split_key` (`str | None`, default `None`): Optional metadata key specifying pre-defined splits (`"train"` / `"test"`).
   - `metric` (`str`, default `"accuracy"`): Main metric for the task (`"accuracy"`, `"macro_f1"`, `"micro_f1"`), also populated in `result.metrics["value"]`.
 
 ```python
@@ -143,8 +141,6 @@ Predicts a continuous target value for the entire audio clip.
   - `regressor` (`BaseRegressor`, required): An explicit instantiated regressor model (e.g., `LinearBenchmarkRegressor()`, `KNNBenchmarkRegressor()`, `MLPBenchmarkRegressor()`, `TransformerBenchmarkRegressor()`, or `BayesOptRegressor(...)`). Passing `None` is not allowed.
   - `target_key` (`str`, default `"target"`): Key in sample metadata containing the numeric target.
   - `pooling` (`str`, default `"mean"`): Temporal pooling method for linear/KNN/MLP. Bypassed for sequence models like `TransformerBenchmarkRegressor`.
-  - `test_size` (`float`, default `0.2`): Fraction of dataset reserved for testing.
-  - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined train/test splits.
   - `metric` (`str`, default `"r2"`): Main metric for the task (`"r2"`, `"mse"`, `"rmse"`, `"mae"`, `"pearson_r"`), also populated in `result.metrics["value"]`.
 
 ```python
@@ -168,8 +164,6 @@ Classifies a label for each frame across time.
 - **Parameters**:
   - `classifier` (`BaseClassifier`, required): An explicit instantiated classifier model (e.g., `LinearBenchmarkClassifier()`, `KNNBenchmarkClassifier()`, or `MLPBenchmarkClassifier()`). Passing `None` is not allowed.
   - `label_key` (`str`, default `"frame_labels"`): Metadata key with the per-frame label sequence.
-  - `test_size` (`float`, default `0.2`): Train/test split at the audio clip level (avoids temporal leakage).
-  - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined splits.
   - `metric` (`str`, default `"accuracy"`): Main metric for the task (`"accuracy"`, `"macro_f1"`, `"micro_f1"`), also populated in `result.metrics["value"]`.
 
 ```python
@@ -188,8 +182,6 @@ Predicts a continuous target for each frame across time.
 - **Parameters**:
   - `regressor` (`BaseRegressor`, required): An explicit instantiated regressor model (e.g., `LinearBenchmarkRegressor()`, `KNNBenchmarkRegressor()`, or `MLPBenchmarkRegressor()`). Passing `None` is not allowed.
   - `target_key` (`str`, default `"frame_targets"`): Metadata key with the per-frame numeric sequence.
-  - `test_size` (`float`, default `0.2`): Train/test split at the clip level.
-  - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined splits.
   - `metric` (`str`, default `"r2"`): Main metric for the task (`"r2"`, `"mse"`, `"rmse"`, `"mae"`, `"pearson_r"`), also populated in `result.metrics["value"]`.
 
 ```python
@@ -204,29 +196,29 @@ task_frame_reg = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
 Models variable-length discrete token sequences (e.g., words, phonemes, character IDs).
 
 - **Metadata Key**: `'tokens'` (or custom via `target_key`). A list of strings (e.g. `["ph_0", "ph_1"]`) or integers. A vocabulary is automatically built if strings are provided.
-- **Methods**:
-  - `'ctc'`: A linear projection probe trained with Connectionist Temporal Classification loss and greedy best-path collapse decoding.
-  - `'transformer'`: An autoregressive Transformer decoder with cross-attention over the audio representations and causal decoding.
+- **Probe Architecture**:
+  - `CTCSequenceProbe`: A linear projection probe trained with Connectionist Temporal Classification loss and greedy best-path collapse decoding.
+  - `TransformerDecoderProbe`: An autoregressive Transformer decoder with cross-attention over the audio representations and causal decoding.
 - **Metrics**: Token Error Rate (PER/CER via Levenshtein edit distance) and Exact Sequence Match Accuracy.
 - **Parameters**:
-  - `method` (`str`, default `"ctc"`): Modeling architecture (`"ctc"` or `"transformer"`).
+  - `probe` (`BaseSequenceProbe`, required): An explicit probe instance (`CTCSequenceProbe(...)` or `TransformerDecoderProbe(...)`). Passing `None` or string names is not allowed.
   - `target_key` (`str`, default `"tokens"`): Metadata key containing the token sequence.
-  - `epochs` (`int`, default `25`): Number of training epochs for the downstream probe.
-  - `batch_size` (`int`, default `16`): Batch size for probe training.
-  - `lr` (`float`, default `1e-3`): Learning rate for probe optimizer.
-  - `test_size` (`float`, default `0.2`): Clip-level train/test split.
-  - `split_key` (`str | None`, default `None`): Optional metadata key for pre-defined splits.
-  - `model_kwargs` (`dict | None`): Extra kwargs for the probe (e.g. `d_model`, `nhead`, `num_layers` for Transformer decoder).
   - `metric` (`str`, default `"token_error_rate"`): Main metric for the task (`"token_error_rate"`, `"sequence_accuracy"`), also populated in `result.metrics["value"]`.
 
 ```python
-from audio_benchmark import SequenceModelingTask
+from audio_benchmark import (
+    CTCSequenceProbe,
+    SequenceModelingTask,
+    TransformerDecoderProbe,
+)
 
 # CTC linear projection probe
-task_ctc = SequenceModelingTask(method="ctc", epochs=20)
+task_ctc = SequenceModelingTask(probe=CTCSequenceProbe(epochs=20))
 
 # Autoregressive Transformer decoder probe
-task_tf = SequenceModelingTask(method="transformer", epochs=20)
+task_tf = SequenceModelingTask(
+    probe=TransformerDecoderProbe(epochs=20, d_model=64, nhead=4)
+)
 ```
 
 ---
@@ -312,11 +304,17 @@ from audio_benchmark import (
     LinearBenchmarkRegressor,
     RegressionTask,
     SequenceModelingTask,
+    TransformerDecoderProbe,
 )
 
-# 1. Provide your model and dataset
+# 1. Provide your model and datasets
 model = DummyAudioModel(representation_dim=64)
-dataset = DummyAudioDataset(num_samples=40, audio_length=16000, num_classes=4)
+train_dataset = DummyAudioDataset(
+    num_samples=40, audio_length=16000, num_classes=4, name="speech_train"
+)
+test_dataset = DummyAudioDataset(
+    num_samples=16, audio_length=16000, num_classes=4, name="speech_test"
+)
 
 # 2. Initialize benchmark runner with representation caching enabled
 benchmark = AudioBenchmark(cache_dir=".benchmark_cache", enable_cache=True)
@@ -325,7 +323,8 @@ benchmark = AudioBenchmark(cache_dir=".benchmark_cache", enable_cache=True)
 res_clf = benchmark.run(
     model=model,
     model_name="my_model_v1",
-    dataset=dataset,
+    dataset=train_dataset,
+    testset=test_dataset,
     task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
 )
 
@@ -333,15 +332,17 @@ res_clf = benchmark.run(
 res_reg = benchmark.run(
     model=model,
     model_name="my_model_v1",
-    dataset=dataset,
+    dataset=train_dataset,
+    testset=test_dataset,
     task=RegressionTask(regressor=LinearBenchmarkRegressor()),
 )
 
 res_seq = benchmark.run(
     model=model,
     model_name="my_model_v1",
-    dataset=dataset,
-    task=SequenceModelingTask(method="transformer", epochs=10),
+    dataset=train_dataset,
+    testset=test_dataset,
+    task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=10)),
 )
 
 # 4. Print summaries or inspect metrics
@@ -379,13 +380,20 @@ from audio_benchmark import (
 )
 
 # Optimize KNN classifier hyperparameters (e.g. n_neighbors, distance metric)
-opt_clf = BayesOptClassifier(base_model=KNNBenchmarkClassifier(), n_trials=15, cv=3)
+knn_space = {
+    "n_neighbors": (1, 15),
+    "metric": ["minkowski", "cosine", "euclidean"],
+}
+opt_clf = BayesOptClassifier(
+    base_model=KNNBenchmarkClassifier(), param_space=knn_space, n_trials=15, cv=3
+)
 task_clf = GlobalClassificationTask(classifier=opt_clf)
 
 result = benchmark.run(
     model=my_model,
     model_name="encoder",
-    dataset=my_dataset,
+    dataset=train_dataset,
+    testset=test_dataset,
     task=task_clf,
 )
 

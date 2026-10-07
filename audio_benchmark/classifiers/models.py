@@ -9,9 +9,13 @@ from sklearn.metrics import accuracy_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from torch import nn
-from tqdm import tqdm
 
-from audio_benchmark.utils import PositionalEncoding, resolve_device, to_numpy
+from audio_benchmark.utils import (
+    PositionalEncoding,
+    resolve_device,
+    to_numpy,
+    train_torch_model,
+)
 
 
 class BaseClassifier(ABC):
@@ -358,37 +362,19 @@ class MLPBenchmarkClassifier(BaseClassifier):
             num_layers=self.num_layers,
         ).to(self.device)
 
-        dataset = torch.utils.data.TensorDataset(X_t, y_t)
-        loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True
-        )
-
-        optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-        criterion = nn.CrossEntropyLoss()
-
-        self.model.train()
-        epoch_iter = tqdm(
-            range(self.epochs),
+        train_torch_model(
+            model=self.model,
+            X=X_t,
+            y=y_t,
+            criterion=nn.CrossEntropyLoss(),
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+            device=self.device,
+            show_progress=self.show_progress,
             desc="Training MLPClassifier",
-            disable=not self.show_progress,
-            leave=False,
         )
-        for _ in epoch_iter:
-            running_loss = 0.0
-            for batch_x, batch_y in loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                optimizer.zero_grad()
-                logits = self.model(batch_x)
-                loss = criterion(logits, batch_y)
-                loss.backward()
-                optimizer.step()
-                running_loss += float(loss.item())
-            epoch_iter.set_postfix(
-                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
-            )
-
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
@@ -591,37 +577,19 @@ class TransformerBenchmarkClassifier(BaseClassifier):
             aggregation=self.aggregation,
         ).to(self.device)
 
-        dataset = torch.utils.data.TensorDataset(X_t, y_t)
-        loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True
-        )
-
-        optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-        criterion = nn.CrossEntropyLoss()
-
-        self.model.train()
-        epoch_iter = tqdm(
-            range(self.epochs),
+        train_torch_model(
+            model=self.model,
+            X=X_t,
+            y=y_t,
+            criterion=nn.CrossEntropyLoss(),
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+            device=self.device,
+            show_progress=self.show_progress,
             desc="Training TransformerClassifier",
-            disable=not self.show_progress,
-            leave=False,
         )
-        for _ in epoch_iter:
-            running_loss = 0.0
-            for batch_x, batch_y in loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                optimizer.zero_grad()
-                logits = self.model(batch_x)
-                loss = criterion(logits, batch_y)
-                loss.backward()
-                optimizer.step()
-                running_loss += float(loss.item())
-            epoch_iter.set_postfix(
-                {"loss": f"{running_loss / max(1, len(loader)):.4f}"}
-            )
-
         return self
 
     def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:

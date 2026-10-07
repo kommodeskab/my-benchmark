@@ -17,22 +17,18 @@ from audio_benchmark.tasks.regression import RegressionTask
 
 
 def test_regression_task_with_different_regressors():
-    task_linear = RegressionTask(
-        regressor=LinearBenchmarkRegressor(), test_size=0.25, random_state=42
-    )
-    task_knn = RegressionTask(
-        regressor=KNNBenchmarkRegressor(), test_size=0.25, random_state=42
-    )
+    task_linear = RegressionTask(regressor=LinearBenchmarkRegressor())
+    task_knn = RegressionTask(regressor=KNNBenchmarkRegressor())
     task_mlp = RegressionTask(
         regressor=MLPBenchmarkRegressor(epochs=1, device="cpu"),
-        test_size=0.25,
-        random_state=42,
     )
 
-    reps = torch.randn(20, 4, 16)
-    meta = [{"target": float(i * 1.5 + 2.0)} for i in range(20)]
+    train_reps = torch.randn(15, 4, 16)
+    train_meta = [{"target": float(i * 1.5 + 2.0)} for i in range(15)]
+    test_reps = torch.randn(5, 4, 16)
+    test_meta = [{"target": float(i * 1.5 + 2.0)} for i in range(5)]
 
-    info = task_linear.examine_data(meta)
+    info = task_linear.examine_data(train_meta, test_meta)
     assert info["train_samples"] == 15
     assert info["test_samples"] == 5
     assert info["baseline_strategy"] == "mean_predictor"
@@ -43,7 +39,7 @@ def test_regression_task_with_different_regressors():
     assert "target_mean" in info
 
     for task in (task_linear, task_knn, task_mlp):
-        res = task.evaluate(reps, meta)
+        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
         assert "train_samples" not in res
         assert "test_samples" not in res
         assert "target_key" not in res
@@ -66,14 +62,14 @@ def test_regression_task_with_transformer():
             epochs=1,
             device="cpu",
         ),
-        test_size=0.25,
-        random_state=42,
     )
 
-    reps = torch.randn(20, 4, 16)
-    meta = [{"target": float(i * 1.5 + 2.0)} for i in range(20)]
+    train_reps = torch.randn(15, 4, 16)
+    train_meta = [{"target": float(i * 1.5 + 2.0)} for i in range(15)]
+    test_reps = torch.randn(5, 4, 16)
+    test_meta = [{"target": float(i * 1.5 + 2.0)} for i in range(5)]
 
-    res = task_tf.evaluate(reps, meta)
+    res = task_tf.evaluate(train_reps, train_meta, test_reps, test_meta)
     assert res["regressor"] == "TransformerBenchmarkRegressor"
     assert res["pooling"] == "none (transformer)"
     assert "train_samples" not in res
@@ -83,60 +79,52 @@ def test_regression_task_with_transformer():
 
 
 def test_regression_task_pooling_modes():
-    reps = torch.randn(12, 6, 8)
-    meta = [{"target": float(i)} for i in range(12)]
+    train_reps = torch.randn(8, 6, 8)
+    train_meta = [{"target": float(i)} for i in range(8)]
+    test_reps = torch.randn(4, 6, 8)
+    test_meta = [{"target": float(i)} for i in range(4)]
 
     for pool in ["mean", "max", "first", "last"]:
         task = RegressionTask(regressor=LinearBenchmarkRegressor(), pooling=pool)
-        res = task.evaluate(reps, meta)
+        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
         assert res["pooling"] == pool
         assert "mse" in res
 
 
-def test_regression_task_with_split_key():
-    reps = torch.randn(15, 4, 8)
-    meta = []
-    for i in range(15):
-        split = "train" if i < 10 else "test"
-        meta.append({"target": float(i * 0.5), "split": split})
-
-    task = RegressionTask(regressor=LinearBenchmarkRegressor(), split_key="split")
-    info = task.examine_data(meta)
-    assert info["train_samples"] == 10
-    assert info["test_samples"] == 5
-
-    res = task.evaluate(reps, meta)
-    assert "train_samples" not in res
-
-
 def test_regression_task_missing_target_raises():
     task = RegressionTask(regressor=LinearBenchmarkRegressor(), target_key="pitch")
-    reps = torch.randn(6, 4, 8)
-    meta = [{"wrong_target": 1.0} for _ in range(6)]
+    train_reps = torch.randn(4, 4, 8)
+    train_meta = [{"wrong_target": 1.0} for _ in range(4)]
+    test_reps = torch.randn(2, 4, 8)
+    test_meta = [{"wrong_target": 1.0} for _ in range(2)]
 
     with pytest.raises(InvalidDatasetError, match="does not contain target key"):
-        task.evaluate(reps, meta)
+        task.evaluate(train_reps, train_meta, test_reps, test_meta)
 
 
 def test_regression_task_invalid_target_value_raises():
     task = RegressionTask(regressor=LinearBenchmarkRegressor(), target_key="target")
-    reps = torch.randn(6, 4, 8)
-    meta = [{"target": "not_a_number"} for _ in range(6)]
+    train_reps = torch.randn(4, 4, 8)
+    train_meta = [{"target": "not_a_number"} for _ in range(4)]
+    test_reps = torch.randn(2, 4, 8)
+    test_meta = [{"target": 1.0} for _ in range(2)]
 
     with pytest.raises(TaskError, match="cannot be converted to float"):
-        task.evaluate(reps, meta)
+        task.evaluate(train_reps, train_meta, test_reps, test_meta)
 
 
 def test_benchmark_runner_with_regression_task(tmp_path):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
-    dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=2)
+    train_dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=2)
+    test_dataset = DummyAudioDataset(num_samples=5, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
     task = RegressionTask(regressor=LinearBenchmarkRegressor())
 
     result = benchmark.run(
         model=model,
         model_name="dummy_reg_model",
-        dataset=dataset,
+        dataset=train_dataset,
+        testset=test_dataset,
         task=task,
         batch_size=4,
         device="cpu",

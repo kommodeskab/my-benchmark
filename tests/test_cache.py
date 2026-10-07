@@ -84,22 +84,3 @@ def test_cache_memmap_files_and_manifest(tmp_path):
     loaded_reps[0, 0, 0] = 999.0
     fresh_reps, _ = cache.load(model_name, dataset_name)
     assert fresh_reps[0, 0, 0] != 999.0
-
-
-def test_cache_legacy_pt_compatibility(tmp_path):
-    cache = RepresentationCache(cache_dir=tmp_path)
-    model_name = "old_model"
-    dataset_name = "old_dataset"
-
-    # Simulate an old single .pt cache file
-    model_dir = tmp_path / model_name
-    model_dir.mkdir(parents=True)
-    legacy_file = model_dir / f"{dataset_name}.pt"
-    old_reps = torch.randn(4, 10, 16)
-    old_meta = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
-    torch.save({"representations": old_reps, "metadata": old_meta}, legacy_file)
-
-    assert cache.has(model_name, dataset_name)
-    loaded_reps, loaded_meta = cache.load(model_name, dataset_name)
-    assert torch.allclose(old_reps, loaded_reps)
-    assert loaded_meta == old_meta

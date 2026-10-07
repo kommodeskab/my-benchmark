@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 
 from audio_benchmark import (
     AudioBenchmark,
+    CTCSequenceProbe,
     DummyAudioDataset,
     DummyAudioModel,
     FrameClassificationTask,
@@ -56,23 +57,24 @@ def test_base_task_extract_metadata_sources():
 
 
 def test_global_classification_examine_data():
-    # 10 samples: 7 class 'cat', 3 class 'dog'
-    samples = [{"label": "cat"} for _ in range(7)] + [
+    train_samples = [{"label": "cat"} for _ in range(7)] + [
         {"label": "dog"} for _ in range(3)
     ]
-    ds = SimpleAudioDataset(samples)
+    test_samples = [{"label": "cat"} for _ in range(2)] + [
+        {"label": "dog"} for _ in range(1)
+    ]
+    ds_train = SimpleAudioDataset(train_samples)
+    ds_test = SimpleAudioDataset(test_samples)
 
     task = GlobalClassificationTask(
         classifier=KNNBenchmarkClassifier(),
-        test_size=0.3,
-        random_state=42,
         metric="accuracy",
     )
-    info = task.examine_data(ds)
+    info = task.examine_data(ds_train, ds_test)
 
     assert info["task"] == "global_classification"
-    assert info["total_samples"] == 10
-    assert info["train_samples"] == 7
+    assert info["total_samples"] == 13
+    assert info["train_samples"] == 10
     assert info["test_samples"] == 3
     assert info["num_classes"] == 2
     assert set(info["classes"]) == {"cat", "dog"}
@@ -86,13 +88,15 @@ def test_global_classification_examine_data():
 
 
 def test_global_classification_examine_data_custom_metric():
-    samples = [{"label": f"c_{i % 3}"} for i in range(12)]
-    ds = SimpleAudioDataset(samples)
+    train_samples = [{"label": f"c_{i % 3}"} for i in range(12)]
+    test_samples = [{"label": f"c_{i % 3}"} for i in range(6)]
+    ds_train = SimpleAudioDataset(train_samples)
+    ds_test = SimpleAudioDataset(test_samples)
 
     task = GlobalClassificationTask(
         classifier=KNNBenchmarkClassifier(), metric="macro_f1"
     )
-    info = task.examine_data(ds)
+    info = task.examine_data(ds_train, ds_test)
 
     assert info["baseline_metric"] == "macro_f1"
     assert info["baseline_value"] == info["baseline_macro_f1"]
@@ -115,17 +119,16 @@ def test_global_classification_examine_data_error_cases():
 
 
 def test_regression_examine_data():
-    targets = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-    samples = [{"target": t} for t in targets]
-    ds = SimpleAudioDataset(samples)
+    train_samples = [{"target": t} for t in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]]
+    test_samples = [{"target": t} for t in [7.0, 8.0]]
+    ds_train = SimpleAudioDataset(train_samples)
+    ds_test = SimpleAudioDataset(test_samples)
 
     task = RegressionTask(
         regressor=LinearBenchmarkRegressor(),
-        test_size=0.25,
-        random_state=42,
         metric="r2",
     )
-    info = task.examine_data(ds)
+    info = task.examine_data(ds_train, ds_test)
 
     assert info["task"] == "regression"
     assert info["total_samples"] == 8
@@ -133,8 +136,8 @@ def test_regression_examine_data():
     assert info["test_samples"] == 2
     assert info["target_key"] == "target"
     assert info["target_min"] == 1.0
-    assert info["target_max"] == 8.0
-    assert info["target_mean"] == 4.5
+    assert info["target_max"] == 6.0
+    assert info["target_mean"] == 3.5
     assert info["baseline_strategy"] == "mean_predictor"
     assert info["baseline_metric"] == "r2"
     assert "baseline_value" in info
@@ -162,16 +165,17 @@ def test_regression_examine_data_invalid_target():
 
 
 def test_frame_classification_examine_data():
-    # 8 clips, each 16 frames
-    samples = [
-        {"frame_labels": [0 if j < 10 else 1 for j in range(16)]} for _ in range(8)
+    train_samples = [
+        {"frame_labels": [0 if j < 10 else 1 for j in range(16)]} for _ in range(6)
     ]
-    ds = SimpleAudioDataset(samples, audio_length=16)
+    test_samples = [
+        {"frame_labels": [0 if j < 10 else 1 for j in range(16)]} for _ in range(2)
+    ]
+    ds_train = SimpleAudioDataset(train_samples, audio_length=16)
+    ds_test = SimpleAudioDataset(test_samples, audio_length=16)
 
-    task = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), test_size=0.25, random_state=42
-    )
-    info = task.examine_data(ds)
+    task = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
+    info = task.examine_data(ds_train, ds_test)
 
     assert info["task"] == "frame_classification"
     assert info["total_clips"] == 8
@@ -189,18 +193,20 @@ def test_frame_classification_examine_data():
 
 
 def test_frame_regression_examine_data():
-    samples = [
-        {"frame_targets": [float(i + j * 0.1) for j in range(10)]} for i in range(6)
+    train_samples = [
+        {"frame_targets": [float(i + j * 0.1) for j in range(10)]} for i in range(4)
     ]
-    ds = SimpleAudioDataset(samples, audio_length=10)
+    test_samples = [
+        {"frame_targets": [float(i + j * 0.1) for j in range(10)]} for i in range(2)
+    ]
+    ds_train = SimpleAudioDataset(train_samples, audio_length=10)
+    ds_test = SimpleAudioDataset(test_samples, audio_length=10)
 
     task = FrameRegressionTask(
         regressor=LinearBenchmarkRegressor(),
-        test_size=0.33,
-        random_state=42,
         metric="mae",
     )
-    info = task.examine_data(ds)
+    info = task.examine_data(ds_train, ds_test)
 
     assert info["task"] == "frame_regression"
     assert info["total_clips"] == 6
@@ -216,16 +222,19 @@ def test_frame_regression_examine_data():
 
 
 def test_sequence_modeling_examine_data():
-    samples = [
+    train_samples = [
         {"tokens": ["hello", "world"]},
         {"tokens": ["foo", "bar", "baz"]},
+    ]
+    test_samples = [
         {"tokens": ["hello", "foo"]},
         {"tokens": ["world"]},
     ]
-    ds = SimpleAudioDataset(samples)
+    ds_train = SimpleAudioDataset(train_samples)
+    ds_test = SimpleAudioDataset(test_samples)
 
-    task = SequenceModelingTask(test_size=0.5, random_state=42)
-    info = task.examine_data(ds)
+    task = SequenceModelingTask(probe=CTCSequenceProbe())
+    info = task.examine_data(ds_train, ds_test)
 
     assert info["task"] == "sequence_modeling"
     assert info["total_clips"] == 4
@@ -245,6 +254,7 @@ def test_sequence_modeling_examine_data():
 def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=False)
     dataset = DummyAudioDataset(num_samples=10, audio_length=320, num_classes=3)
+    testset = DummyAudioDataset(num_samples=5, audio_length=320, num_classes=3)
     model = DummyAudioModel(representation_dim=16)
     task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
 
@@ -252,26 +262,28 @@ def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
         model=model,
         model_name="test_model",
         dataset=dataset,
+        testset=testset,
         task=task,
     )
 
-    # Extra info populated from examine_data
-    assert "train_samples" in result.extra_info
-    assert "test_samples" in result.extra_info
-    assert "baseline_value" in result.extra_info
-    assert "baseline_strategy" in result.extra_info
-    assert result.extra_info["baseline_strategy"] == "majority_class"
-    assert result.extra_info["num_classes"] == 3
+    # Extra info populated from examine_data directly
+    info = task.examine_data(dataset, testset)
+    assert "train_samples" in info
+    assert "test_samples" in info
+    assert "baseline_value" in info
+    assert "baseline_strategy" in info
+    assert info["baseline_strategy"] == "majority_class"
+    assert info["num_classes"] == 3
 
     # evaluate metrics should NOT contain dataset stats
     assert "train_samples" not in result.metrics
     assert "test_samples" not in result.metrics
     assert "num_classes" not in result.metrics
     assert "classes" not in result.metrics
+    assert not hasattr(result, "extra_info")
 
     # print_summary prints cleanly
     result.print_summary()
     captured = capsys.readouterr().out
-    assert "Baseline (accuracy) (majority_class):" in captured
-    assert "Num Classes:     3" in captured
-    assert "Split (Tr/Te):" in captured
+    assert "accuracy" in captured
+    assert "value" in captured

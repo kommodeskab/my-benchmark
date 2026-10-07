@@ -1,7 +1,7 @@
 """Main Audio Representation Benchmark suite runner."""
 
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,6 @@ class BenchmarkResult:
         metrics: Dictionary of metric names and numeric results.
         cached: Whether representations were retrieved from cache.
         representations_shape: Shape tuple of the extracted representations (N, T', C').
-        extra_info: Auxiliary dataset statistics and baseline metric results.
     """
 
     model_name: str
@@ -34,7 +33,6 @@ class BenchmarkResult:
     metrics: dict[str, Any]
     cached: bool
     representations_shape: tuple[int, ...]
-    extra_info: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Ensure that metrics always has a 'value' key representing the main result."""
@@ -73,161 +71,18 @@ class BenchmarkResult:
         print(f"  Task:            {self.task_name}")
         print(f"  Cached Reps:     {self.cached}")
         print(f"  Rep Shape:       {self.representations_shape}")
-
-        dataset_info = {**self.extra_info, **self.metrics}
-
-        if "classifier" in self.metrics:
-            print(f"  Classifier:      {self.metrics['classifier'].upper()}")
-        if "regressor" in self.metrics:
-            print(f"  Regressor:       {self.metrics['regressor'].upper()}")
-        if "method" in self.metrics:
-            print(f"  Method:          {self.metrics['method'].upper()}")
-        if "token_error_rate" in self.metrics:
-            print(f"  Token Error Rate: {self.metrics['token_error_rate'] * 100:.2f}%")
-        if "sequence_accuracy" in self.metrics:
-            print(f"  Sequence Acc:    {self.metrics['sequence_accuracy'] * 100:.2f}%")
-        if "accuracy" in self.metrics:
-            print(f"  Test Accuracy:   {self.metrics['accuracy'] * 100:.2f}%")
-        if "train_accuracy" in self.metrics:
-            print(f"  Train Accuracy:  {self.metrics['train_accuracy'] * 100:.2f}%")
-        if "macro_f1" in self.metrics:
-            print(f"  Macro F1:        {self.metrics['macro_f1']:.4f}")
-        if "micro_f1" in self.metrics:
-            print(f"  Micro F1:        {self.metrics['micro_f1']:.4f}")
-        if "mse" in self.metrics:
-            print(f"  Test MSE:        {self.metrics['mse']:.4f}")
-        if "rmse" in self.metrics:
-            print(f"  Test RMSE:       {self.metrics['rmse']:.4f}")
-        if "mae" in self.metrics:
-            print(f"  Test MAE:        {self.metrics['mae']:.4f}")
-        if "r2" in self.metrics:
-            print(f"  Test R²:         {self.metrics['r2']:.4f}")
-        if "pearson_r" in self.metrics:
-            print(f"  Pearson r:       {self.metrics['pearson_r']:.4f}")
-        if "value" in self.metrics and not any(
-            k in self.metrics
-            for k in (
-                "token_error_rate",
-                "sequence_accuracy",
-                "accuracy",
-                "r2",
-                "mse",
-                "rmse",
-                "mae",
-            )
-        ):
-            print(f"  Main Metric (value): {self.metrics['value']}")
-        if "training_time" in self.metrics:
-            print(f"  Training Time:   {self.metrics['training_time']:.4f}s")
-        if "best_params" in self.metrics:
-            print(f"  Best Params:     {self.metrics['best_params']}")
-        if (
-            "best_cv_score" in self.metrics
-            and self.metrics["best_cv_score"] is not None
-        ):
-            print(f"  Best CV Score:   {self.metrics['best_cv_score']:.4f}")
-
-        # Dataset statistics & baseline from dataset examination
-        if "baseline_value" in dataset_info:
-            metric_name = dataset_info.get("baseline_metric", "metric")
-            strat = dataset_info.get("baseline_strategy", "")
-            strat_str = f" ({strat})" if strat else ""
-            b_val = dataset_info["baseline_value"]
-            if isinstance(b_val, float):
-                print(f"  Baseline ({metric_name}){strat_str}: {b_val:.4f}")
-            else:
-                print(f"  Baseline ({metric_name}){strat_str}: {b_val}")
-        if "vocab_size" in dataset_info:
-            print(f"  Vocab Size:      {dataset_info['vocab_size']}")
-        if "num_classes" in dataset_info:
-            print(f"  Num Classes:     {dataset_info['num_classes']}")
-        if "train_samples" in dataset_info and "test_samples" in dataset_info:
-            print(
-                f"  Split (Tr/Te):   {dataset_info['train_samples']} / {dataset_info['test_samples']} samples"
-            )
-        if "train_frames" in dataset_info and "test_frames" in dataset_info:
-            print(
-                f"  Frame Split:     {dataset_info['train_frames']} / {dataset_info['test_frames']} frames"
-            )
-        if "train_clips" in dataset_info and "test_clips" in dataset_info:
-            print(
-                f"  Clip Split:      {dataset_info['train_clips']} / {dataset_info['test_clips']} clips"
-            )
-        if "T_orig" in dataset_info and "T_downsampled" in dataset_info:
-            print(
-                f"  Resolution (T):  {dataset_info['T_orig']} -> {dataset_info['T_downsampled']} frames"
-            )
-
-        ignored_keys = {
-            "classifier",
-            "regressor",
-            "method",
-            "token_error_rate",
-            "sequence_accuracy",
-            "accuracy",
-            "train_accuracy",
-            "macro_f1",
-            "micro_f1",
-            "mse",
-            "rmse",
-            "mae",
-            "r2",
-            "pearson_r",
-            "training_time",
-            "best_params",
-            "best_cv_score",
-            "train_loss",
-            "train_mse",
-            "train_r2",
-            "vocab_size",
-            "num_classes",
-            "train_samples",
-            "test_samples",
-            "train_frames",
-            "test_frames",
-            "train_clips",
-            "test_clips",
-            "T_orig",
-            "T_downsampled",
-            "classes",
-            "task",
-            "pooling",
-            "target_key",
-            "value",
-            "main_metric",
-            "baseline_value",
-            "baseline_metric",
-            "baseline_strategy",
-            "baseline_accuracy",
-            "baseline_macro_f1",
-            "baseline_micro_f1",
-            "baseline_r2",
-            "baseline_mse",
-            "baseline_rmse",
-            "baseline_mae",
-            "baseline_token_error_rate",
-            "baseline_sequence_accuracy",
-            "chance_level",
-            "majority_class",
-            "class_counts",
-            "total_samples",
-            "total_clips",
-            "total_frames",
-            "frame_length",
-            "vocabulary",
-            "min_sequence_length",
-            "max_sequence_length",
-            "mean_sequence_length",
-            "target_min",
-            "target_max",
-            "target_mean",
-            "target_std",
-        }
-
+        if "value" in self.metrics:
+            val = self.metrics["value"]
+            val_str = f"{val:.4f}" if isinstance(val, float) else str(val)
+            print(f"  Main Metric (value): {val_str}")
+        print("  Metrics:")
         for k, v in self.metrics.items():
-            if k not in ignored_keys:
-                print(f"  {k}: {v}")
-
+            if k == "value":
+                continue
+            if isinstance(v, float):
+                print(f"    {k:20s}: {v:.4f}")
+            else:
+                print(f"    {k:20s}: {v}")
         print("-----------------------------------------------------------")
 
 
@@ -238,82 +93,40 @@ class AudioBenchmark:
         self,
         cache_dir: str | Path = ".benchmark_cache",
         enable_cache: bool = True,
-        show_progress: bool = True,
     ):
         """Initialize the benchmark suite.
 
         Args:
             cache_dir: Filesystem directory for caching representations.
             enable_cache: Whether to use caching for computed representations.
-            show_progress: Whether to display a tqdm progress bar during feature extraction.
         """
         self.cache_dir = Path(cache_dir)
         self.enable_cache = enable_cache
-        self.show_progress = show_progress
         self.cache = RepresentationCache(cache_dir=self.cache_dir)
 
-    def run(
+    def _get_representations(
         self,
         model: torch.nn.Module,
         model_name: str,
         dataset: Dataset,
-        task: BaseTask,
-        dataset_name: str | None = None,
-        batch_size: int = 16,
-        device: str | torch.device = "auto",
-        force_recompute: bool = False,
-        show_progress: bool | None = None,
-    ) -> BenchmarkResult:
-        """Run representation extraction and benchmark evaluation for a model on a dataset.
-
-        Args:
-            model: PyTorch representation learning model mapping (B, 1, T) to (B, T', C').
-            model_name: User-specified identifier for the representation model.
-            dataset: Audio dataset returning samples and metadata.
-            task: Task to evaluate on (must be an instance of BaseTask).
-            dataset_name: Optional explicit name for the dataset. Inferred if not given.
-            batch_size: Batch size for representation extraction.
-            device: Device to run representation model on ('auto', 'cpu', 'cuda', etc.).
-            force_recompute: If True, bypass cache and recompute representations.
-            show_progress: Whether to display a tqdm progress bar during feature extraction.
-                If None, defaults to `self.show_progress`.
-
-        Returns:
-            BenchmarkResult: The result containing metrics and metadata.
-        """
-        if not isinstance(task, BaseTask):
-            raise TypeError(
-                f"task must be an instance of BaseTask, got {type(task).__name__}."
-            )
-
-        resolved_dataset_name = dataset_name or get_dataset_name(dataset)
-        effective_show_progress = (
-            self.show_progress if show_progress is None else show_progress
-        )
-
-        # 1. Validate dataset against task requirements
-        task.validate_dataset(dataset)
-
-        # 2. Examine dataset in task context
-        dataset_info = task.examine_data(dataset)
-
-        # 3. Check cache or compute representations
+        resolved_name: str,
+        batch_size: int,
+        device: str | torch.device,
+        force_recompute: bool,
+        show_progress: bool,
+    ) -> tuple[torch.Tensor, list[dict[str, Any]], bool]:
+        """Load or extract representations for a dataset."""
         cached = False
-        representations: torch.Tensor
-        metadata: list[dict[str, Any]]
-
         if (
             self.enable_cache
             and not force_recompute
-            and self.cache.has(model_name, resolved_dataset_name)
+            and self.cache.has(model_name, resolved_name)
         ):
-            representations, metadata = self.cache.load(
-                model_name, resolved_dataset_name
-            )
+            representations, metadata = self.cache.load(model_name, resolved_name)
             cached = True
         else:
             if self.enable_cache:
-                entry_dir = self.cache.get_cache_path(model_name, resolved_dataset_name)
+                entry_dir = self.cache.get_cache_path(model_name, resolved_name)
                 temp_dir = entry_dir.with_name(f"{entry_dir.name}.tmp")
                 if temp_dir.exists():
                     shutil.rmtree(temp_dir)
@@ -326,13 +139,13 @@ class AudioBenchmark:
                     batch_size=batch_size,
                     device=device,
                     mmap_path=mmap_path,
-                    show_progress=effective_show_progress,
+                    show_progress=show_progress,
                 )
 
                 self.cache.commit_temp_dir(
                     temp_dir=temp_dir,
                     model_name=model_name,
-                    dataset_name=resolved_dataset_name,
+                    dataset_name=resolved_name,
                     metadata=metadata,
                     representations_shape=tuple(representations.shape),
                 )
@@ -343,11 +156,115 @@ class AudioBenchmark:
                     batch_size=batch_size,
                     device=device,
                     mmap_path=None,
-                    show_progress=effective_show_progress,
+                    show_progress=show_progress,
                 )
+        return representations, metadata, cached
 
-        # 4. Evaluate representations on the task
-        metrics = task.evaluate(representations, metadata)
+    def run(
+        self,
+        model: torch.nn.Module,
+        model_name: str,
+        dataset: Dataset,
+        testset: Dataset,
+        task: BaseTask,
+        dataset_name: str | None = None,
+        testset_name: str | None = None,
+        batch_size: int = 16,
+        device: str | torch.device = "auto",
+        force_recompute: bool = False,
+        show_progress: bool = True,
+    ) -> BenchmarkResult:
+        """Run representation extraction and benchmark evaluation for a model on train and test datasets.
+
+        Args:
+            model: PyTorch representation learning model mapping (B, 1, T) to (B, T', C').
+            model_name: User-specified identifier for the representation model.
+            dataset: Audio dataset returning samples and metadata for training.
+            testset: Audio dataset returning samples and metadata for testing.
+            task: Task to evaluate on (must be an instance of BaseTask).
+            dataset_name: Optional explicit name for the train dataset. Inferred if not given.
+            testset_name: Optional explicit name for the test dataset. Inferred if not given.
+            batch_size: Batch size for representation extraction.
+            device: Device to run representation model on ('auto', 'cpu', 'cuda', etc.).
+            force_recompute: If True, bypass cache and recompute representations.
+            show_progress: Whether to display a tqdm progress bar during feature extraction.
+
+        Returns:
+            BenchmarkResult: The result containing metrics and metadata.
+
+        Raises:
+            TypeError: If task is not an instance of BaseTask, or if dataset/testset is None.
+        """
+        if dataset is None:
+            raise TypeError(
+                "dataset must be an instantiated Dataset instance, got None. "
+                "AudioBenchmark requires both dataset and testset to be explicitly passed."
+            )
+        if testset is None:
+            raise TypeError(
+                "testset must be an instantiated Dataset instance, got None. "
+                "AudioBenchmark requires both dataset and testset to be explicitly passed."
+            )
+        if not isinstance(task, BaseTask):
+            raise TypeError(
+                f"task must be an instance of BaseTask, got {type(task).__name__}."
+            )
+
+        if dataset_name is not None and testset_name is not None:
+            resolved_dataset_name = dataset_name
+            resolved_testset_name = testset_name
+        elif dataset_name is not None:
+            resolved_dataset_name = f"{dataset_name}_train"
+            resolved_testset_name = f"{dataset_name}_test"
+        elif testset_name is not None:
+            resolved_dataset_name = f"{get_dataset_name(dataset)}_train"
+            resolved_testset_name = testset_name
+        else:
+            ds_name = get_dataset_name(dataset)
+            ts_name = get_dataset_name(testset)
+            if ds_name == ts_name:
+                resolved_dataset_name = f"{ds_name}_train"
+                resolved_testset_name = f"{ts_name}_test"
+            else:
+                resolved_dataset_name = ds_name
+                resolved_testset_name = ts_name
+
+        # 1. Validate datasets against task requirements
+        task.validate_dataset(dataset)
+        task.validate_dataset(testset)
+
+        # 2. Check cache or compute representations for train and test
+        train_reps, train_meta, train_cached = self._get_representations(
+            model=model,
+            model_name=model_name,
+            dataset=dataset,
+            resolved_name=resolved_dataset_name,
+            batch_size=batch_size,
+            device=device,
+            force_recompute=force_recompute,
+            show_progress=show_progress,
+        )
+
+        test_reps, test_meta, test_cached = self._get_representations(
+            model=model,
+            model_name=model_name,
+            dataset=testset,
+            resolved_name=resolved_testset_name,
+            batch_size=batch_size,
+            device=device,
+            force_recompute=force_recompute,
+            show_progress=show_progress,
+        )
+
+        cached = train_cached and test_cached
+
+        # 3. Evaluate representations on the task
+        metrics = task.evaluate(
+            train_representations=train_reps,
+            train_metadata=train_meta,
+            test_representations=test_reps,
+            test_metadata=test_meta,
+        )
 
         return BenchmarkResult(
             model_name=model_name,
@@ -355,8 +272,7 @@ class AudioBenchmark:
             task_name=task.name,
             metrics=metrics,
             cached=cached,
-            representations_shape=tuple(representations.shape),
-            extra_info=dataset_info,
+            representations_shape=tuple(train_reps.shape),
         )
 
     def clear_cache(

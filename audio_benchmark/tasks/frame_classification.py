@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
 
@@ -32,9 +31,6 @@ class FrameClassificationTask(BaseTask):
         classifier: BaseClassifier,
         name: str = "frame_classification",
         label_key: str = "frame_labels",
-        test_size: float = 0.2,
-        random_state: int = 42,
-        split_key: str | None = None,
         metric: str = "accuracy",
     ):
         """Initialize the FrameClassificationTask.
@@ -43,9 +39,6 @@ class FrameClassificationTask(BaseTask):
             classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
             label_key: Metadata key containing the per-frame label sequence (length T).
-            test_size: Proportion of audio clips for testing.
-            random_state: Random seed for train/test split.
-            split_key: Optional metadata key ('train'/'test') for pre-defined splits.
             metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
         """
         super().__init__(name=name)
@@ -71,15 +64,11 @@ class FrameClassificationTask(BaseTask):
                 f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
             )
         self.classifier = classifier
-        self.test_size = test_size
-        self.random_state = random_state
-        self.split_key = split_key
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that dataset metadata contains per-frame labels matching audio length T."""
         validate_dataset(dataset, required_metadata_keys=[self.label_key])
 
-        # Validate that the frame labels match audio length
         parsed = parse_dataset_item(dataset[0])
         audio_length = parsed["waveform"].shape[-1]
         labels = parsed["metadata"][self.label_key]
@@ -96,46 +85,66 @@ class FrameClassificationTask(BaseTask):
 
     def evaluate(
         self,
-        representations: torch.Tensor,
-        metadata: list[dict[str, Any]],
+        train_representations: torch.Tensor,
+        train_metadata: list[dict[str, Any]],
+        test_representations: torch.Tensor,
+        test_metadata: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Downsample frame labels to T' and evaluate downstream classifier.
 
         Args:
-            representations: Tensor of shape (N, T', C').
-            metadata: List of metadata dicts corresponding to each clip.
+            train_representations: Tensor of shape (N_train, T', C').
+            train_metadata: List of metadata dicts corresponding to each train clip.
+            test_representations: Tensor of shape (N_test, T', C').
+            test_metadata: List of metadata dicts corresponding to each test clip.
 
         Returns:
             dict[str, Any]: Frame-level classification metrics.
         """
-        if len(representations) != len(metadata):
+        if len(train_representations) != len(train_metadata):
             raise TaskError(
-                f"Length mismatch: {len(representations)} representations vs {len(metadata)} metadata entries."
+                f"Length mismatch: {len(train_representations)} train representations vs {len(train_metadata)} train metadata entries."
             )
-        if len(representations) == 0:
-            raise TaskError("No representations provided for evaluation.")
+        if len(test_representations) != len(test_metadata):
+            raise TaskError(
+                f"Length mismatch: {len(test_representations)} test representations vs {len(test_metadata)} test metadata entries."
+            )
+        if len(train_representations) == 0:
+            raise TaskError("No train representations provided for evaluation.")
+        if len(test_representations) == 0:
+            raise TaskError("No test representations provided for evaluation.")
 
-        num_clips, target_len, feature_dim = representations.shape
+        _, target_len_train, feature_dim = train_representations.shape
+        _, target_len_test, _ = test_representations.shape
 
-        # Downsample labels for each clip from T to T' using mode (most common label)
-        downsampled_labels_per_clip: list[np.ndarray] = []
-
-        for idx, meta in enumerate(metadata):
+        train_labels_per_clip = []
+        for idx, meta in enumerate(train_metadata):
             if self.label_key not in meta:
                 raise InvalidDatasetError(
-                    f"Sample at index {idx} metadata does not contain '{self.label_key}'."
+                    f"Train sample at index {idx} metadata does not contain '{self.label_key}'."
                 )
-            raw_labels = meta[self.label_key]
             downsampled = downsample_sequence(
-                raw_labels, target_len=target_len, mode="mode"
+                meta[self.label_key], target_len=target_len_train, mode="mode"
             )
-            downsampled_labels_per_clip.append(downsampled)
+            train_labels_per_clip.append(downsampled)
 
-        # Encode labels globally
-        all_labels_flat = np.concatenate(downsampled_labels_per_clip)
+        test_labels_per_clip = []
+        for idx, meta in enumerate(test_metadata):
+            if self.label_key not in meta:
+                raise InvalidDatasetError(
+                    f"Test sample at index {idx} metadata does not contain '{self.label_key}'."
+                )
+            downsampled = downsample_sequence(
+                meta[self.label_key], target_len=target_len_test, mode="mode"
+            )
+            test_labels_per_clip.append(downsampled)
+
+        train_flat = np.concatenate(train_labels_per_clip)
+        test_flat = np.concatenate(test_labels_per_clip)
+        all_labels = np.concatenate([train_flat, test_flat])
+
         encoder = LabelEncoder()
-        all_labels_encoded = encoder.fit_transform(all_labels_flat)
-        encoded_per_clip = all_labels_encoded.reshape(num_clips, target_len)
+        encoder.fit(all_labels)
         num_classes = len(encoder.classes_)
 
         if num_classes < 2:
@@ -143,44 +152,19 @@ class FrameClassificationTask(BaseTask):
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        features_np = representations.detach().cpu().numpy()  # (N, T', C')
+        y_train = encoder.transform(train_flat)
+        y_test = encoder.transform(test_flat)
 
-        # Split at the clip level to avoid temporal leakage between frames of the same clip
-        clip_indices = np.arange(num_clips)
-        if self.split_key is not None and all(self.split_key in m for m in metadata):
-            train_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "train"
-            ]
-            test_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "test"
-            ]
-            if len(train_clips) == 0 or len(test_clips) == 0:
-                raise TaskError(
-                    f"Invalid train/test split via split_key '{self.split_key}': "
-                    f"{len(train_clips)} train clips, {len(test_clips)} test clips."
-                )
-        else:
-            train_clips, test_clips = train_test_split(
-                clip_indices, test_size=self.test_size, random_state=self.random_state
-            )
+        X_train = train_representations.detach().cpu().numpy().reshape(-1, feature_dim)
+        X_test = test_representations.detach().cpu().numpy().reshape(-1, feature_dim)
 
-        # Flatten frames for training and testing: (N_subset * T', C')
-        X_train = features_np[train_clips].reshape(-1, feature_dim)
-        y_train = encoded_per_clip[train_clips].reshape(-1)
-
-        X_test = features_np[test_clips].reshape(-1, feature_dim)
-        y_test = encoded_per_clip[test_clips].reshape(-1)
-
-        # Classifier instance
         classifier_inst = self.classifier
         classifier_name = classifier_inst.__class__.__name__
 
-        # Fit classifier with timing
         start_time = time.perf_counter()
         classifier_inst.fit(X_train, y_train)
         training_time = float(time.perf_counter() - start_time)
 
-        # Evaluate on test frames
         metrics = classifier_inst.evaluate(X_test, y_test)
         train_metrics = classifier_inst.evaluate(X_train, y_train)
 
@@ -204,36 +188,34 @@ class FrameClassificationTask(BaseTask):
 
         return results
 
-    def examine_data(self, dataset: Dataset) -> dict[str, Any]:
+    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
         """Examine the dataset in the context of frame classification.
 
-        Validates the dataset, computes clip/frame distributions, class counts,
+        Validates the datasets, computes clip/frame distributions, class counts,
         and evaluates a trivial baseline (majority frame class) on test frames.
 
         Args:
-            dataset: Audio dataset to examine.
+            dataset: Audio dataset to examine for training.
+            testset: Optional audio dataset to examine for testing.
 
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
         self._validate_for_examination(dataset, [self.label_key])
-        metadata = self.extract_metadata(dataset)
+        train_metadata = self.extract_metadata(dataset)
 
-        if len(metadata) == 0:
+        if testset is not None:
+            self._validate_for_examination(testset, [self.label_key])
+            test_metadata = self.extract_metadata(testset)
+        else:
+            test_metadata = train_metadata
+
+        if len(train_metadata) == 0:
             raise TaskError("Cannot examine an empty dataset.")
 
-        total_clips = len(metadata)
-        frame_lengths = []
-        all_labels = []
-
-        for idx, meta in enumerate(metadata):
-            if self.label_key not in meta:
-                raise InvalidDatasetError(
-                    f"Sample at index {idx} metadata does not contain '{self.label_key}'."
-                )
-            labels = meta[self.label_key]
-            frame_lengths.append(len(labels))
-            all_labels.extend(labels)
+        train_labels = [label for m in train_metadata for label in m[self.label_key]]
+        test_labels = [label for m in test_metadata for label in m[self.label_key]]
+        all_labels = train_labels + (test_labels if testset is not None else [])
 
         encoder = LabelEncoder()
         encoder.fit(all_labels)
@@ -245,39 +227,12 @@ class FrameClassificationTask(BaseTask):
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        clip_indices = np.arange(total_clips)
-        if self.split_key is not None and all(self.split_key in m for m in metadata):
-            train_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "train"
-            ]
-            test_clips = [
-                i for i, m in enumerate(metadata) if m[self.split_key] == "test"
-            ]
-            if len(train_clips) == 0 or len(test_clips) == 0:
-                raise TaskError(
-                    f"Invalid train/test split via split_key '{self.split_key}': "
-                    f"{len(train_clips)} train clips, {len(test_clips)} test clips."
-                )
-        else:
-            train_clips, test_clips = train_test_split(
-                clip_indices, test_size=self.test_size, random_state=self.random_state
-            )
-
-        train_frames_count = sum(frame_lengths[i] for i in train_clips)
-        test_frames_count = sum(frame_lengths[i] for i in test_clips)
-        total_frames = len(all_labels)
-        frame_len_sample = frame_lengths[0] if frame_lengths else 0
-
-        # Class counts across all frames
-        class_counts = {str(c): int(count) for c, count in Counter(all_labels).items()}
-
-        # Majority class in training clips
-        train_labels = [
-            label for i in train_clips for label in metadata[i][self.label_key]
-        ]
-        test_labels = [
-            label for i in test_clips for label in metadata[i][self.label_key]
-        ]
+        frame_len_sample = (
+            len(train_metadata[0][self.label_key]) if train_metadata else 0
+        )
+        class_counts = {
+            str(c): int(count) for c, count in Counter(train_labels).items()
+        }
 
         train_counts = Counter(train_labels)
         majority_raw = train_counts.most_common(1)[0][0]
@@ -306,13 +261,15 @@ class FrameClassificationTask(BaseTask):
 
         return {
             "task": self.name,
-            "total_clips": int(total_clips),
-            "train_clips": len(train_clips),
-            "test_clips": len(test_clips),
+            "total_clips": len(train_metadata)
+            + (len(test_metadata) if testset is not None else 0),
+            "train_clips": len(train_metadata),
+            "test_clips": len(test_metadata) if testset is not None else 0,
             "frame_length": int(frame_len_sample),
-            "total_frames": int(total_frames),
-            "train_frames": int(train_frames_count),
-            "test_frames": int(test_frames_count),
+            "total_frames": len(train_labels)
+            + (len(test_labels) if testset is not None else 0),
+            "train_frames": len(train_labels),
+            "test_frames": len(test_labels) if testset is not None else 0,
             "num_classes": int(num_classes),
             "classes": classes,
             "class_counts": class_counts,

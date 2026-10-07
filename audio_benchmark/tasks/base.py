@@ -32,28 +32,37 @@ class BaseTask(ABC):
     @abstractmethod
     def evaluate(
         self,
-        representations: torch.Tensor,
-        metadata: list[dict[str, Any]],
+        train_representations: torch.Tensor,
+        train_metadata: list[dict[str, Any]],
+        test_representations: torch.Tensor,
+        test_metadata: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Evaluate representations on this task.
+        """Evaluate representations on this task using explicit train and test sets.
 
         Args:
-            representations: Tensor of shape (N, T', C').
-            metadata: List of metadata dicts corresponding to each sample.
+            train_representations: Tensor of shape (N_train, T', C').
+            train_metadata: List of metadata dicts corresponding to each train sample.
+            test_representations: Tensor of shape (N_test, T', C').
+            test_metadata: List of metadata dicts corresponding to each test sample.
 
         Returns:
             dict[str, Any]: Dictionary containing evaluation metrics.
         """
 
     @abstractmethod
-    def examine_data(self, dataset: Dataset) -> dict[str, Any]:
+    def examine_data(
+        self,
+        dataset: Any,
+        testset: Any | None = None,
+    ) -> dict[str, Any]:
         """Examine the dataset in the context of this task.
 
-        Returns dataset characteristics (such as sample counts, splits, class or target
+        Returns dataset characteristics (such as sample counts, class or target
         statistics) and expected baseline metric performance.
 
         Args:
-            dataset: PyTorch dataset.
+            dataset: PyTorch dataset or sequence of sample metadata dicts for training.
+            testset: Optional PyTorch dataset or sequence of sample metadata dicts for testing.
 
         Returns:
             dict[str, Any]: Summary statistics and baseline metrics.

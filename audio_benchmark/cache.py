@@ -52,19 +52,11 @@ class RepresentationCache:
         """Get the filesystem path for the serialized metadata file."""
         return self.get_cache_path(model_name, dataset_name) / "metadata.pt"
 
-    def _get_legacy_path(self, model_name: str, dataset_name: str) -> Path:
-        """Get legacy single .pt cache path for backwards compatibility."""
-        safe_model = sanitize_filename(model_name)
-        safe_dataset = sanitize_filename(dataset_name)
-        return self.cache_dir / safe_model / f"{safe_dataset}.pt"
-
     def has(self, model_name: str, dataset_name: str) -> bool:
-        """Check if cached representations exist (supports both memmap and legacy .pt)."""
+        """Check if cached representations exist."""
         memmap_file = self.get_memmap_path(model_name, dataset_name)
-        if memmap_file.is_file():
-            return True
-        legacy_file = self._get_legacy_path(model_name, dataset_name)
-        return legacy_file.is_file()
+        metadata_file = self.get_metadata_path(model_name, dataset_name)
+        return memmap_file.is_file() and metadata_file.is_file()
 
     def load(
         self, model_name: str, dataset_name: str
@@ -91,17 +83,10 @@ class RepresentationCache:
         memmap_file = self.get_memmap_path(model_name, dataset_name)
         metadata_file = self.get_metadata_path(model_name, dataset_name)
 
-        if memmap_file.is_file():
-            # Memory-map the representations with copy-on-write mode
-            mm = np.lib.format.open_memmap(memmap_file, mode="c")
-            representations = torch.from_numpy(mm)
-            metadata = torch.load(metadata_file, weights_only=False)
-            return representations, metadata
-
-        # Fallback to legacy single .pt file
-        legacy_file = self._get_legacy_path(model_name, dataset_name)
-        data = torch.load(legacy_file, weights_only=False)
-        return data["representations"], data["metadata"]
+        mm = np.lib.format.open_memmap(memmap_file, mode="c")
+        representations = torch.from_numpy(mm)
+        metadata = torch.load(metadata_file, weights_only=False)
+        return representations, metadata
 
     def save(
         self,
@@ -192,9 +177,6 @@ class RepresentationCache:
             entry_dir = self.get_cache_path(model_name, dataset_name)
             if entry_dir.exists():
                 shutil.rmtree(entry_dir)
-            legacy_file = self._get_legacy_path(model_name, dataset_name)
-            if legacy_file.exists():
-                legacy_file.unlink()
         elif model_name is not None:
             safe_model = sanitize_filename(model_name)
             model_dir = self.cache_dir / safe_model

@@ -29,24 +29,22 @@ class MismatchedFrameRegDataset(Dataset):
 
 
 def test_frame_regression_with_regressors():
-    task_linear = FrameRegressionTask(
-        regressor=LinearBenchmarkRegressor(), test_size=0.25, random_state=42
-    )
-    task_knn = FrameRegressionTask(
-        regressor=KNNBenchmarkRegressor(), test_size=0.25, random_state=42
-    )
+    task_linear = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
+    task_knn = FrameRegressionTask(regressor=KNNBenchmarkRegressor())
     task_mlp = FrameRegressionTask(
         regressor=MLPBenchmarkRegressor(epochs=1, device="cpu"),
-        test_size=0.25,
-        random_state=42,
     )
 
-    reps = torch.randn(8, 4, 8)
-    meta = [
-        {"frame_targets": [float(i * 2 + j * 0.1) for j in range(16)]} for i in range(8)
+    train_reps = torch.randn(6, 4, 8)
+    train_meta = [
+        {"frame_targets": [float(i * 2 + j * 0.1) for j in range(16)]} for i in range(6)
+    ]
+    test_reps = torch.randn(2, 4, 8)
+    test_meta = [
+        {"frame_targets": [float(i * 2 + j * 0.1) for j in range(16)]} for i in range(2)
     ]
 
-    info = task_linear.examine_data(meta)
+    info = task_linear.examine_data(train_meta, test_meta)
     assert info["train_clips"] == 6
     assert info["test_clips"] == 2
     assert info["frame_length"] == 16
@@ -58,7 +56,7 @@ def test_frame_regression_with_regressors():
     assert "baseline_value" in info
 
     for task in (task_linear, task_knn, task_mlp):
-        res = task.evaluate(reps, meta)
+        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
         assert "train_clips" not in res
         assert "test_clips" not in res
         assert "train_frames" not in res
@@ -81,33 +79,18 @@ def test_frame_regression_dataset_validation():
         task.validate_dataset(bad_ds)
 
 
-def test_frame_regression_with_split_key():
-    task = FrameRegressionTask(regressor=LinearBenchmarkRegressor(), split_key="split")
-    reps = torch.randn(6, 3, 8)
-    meta = []
-    for i in range(6):
-        split = "train" if i < 4 else "test"
-        meta.append({"frame_targets": [float(j) for j in range(12)], "split": split})
-
-    info = task.examine_data(meta)
-    assert info["train_clips"] == 4
-    assert info["test_clips"] == 2
-
-    res = task.evaluate(reps, meta)
-    assert "train_clips" not in res
-    assert "train_frames" not in res
-
-
 def test_benchmark_runner_with_frame_regression(tmp_path):
     benchmark = AudioBenchmark(cache_dir=tmp_path, enable_cache=True)
-    dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
+    train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
+    test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
     model = DummyAudioModel(representation_dim=16)
     task = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
 
     result = benchmark.run(
         model=model,
         model_name="dummy_frame_reg_model",
-        dataset=dataset,
+        dataset=train_dataset,
+        testset=test_dataset,
         task=task,
         batch_size=4,
         device="cpu",
@@ -116,8 +99,10 @@ def test_benchmark_runner_with_frame_regression(tmp_path):
     assert result.task_name == "frame_regression"
     assert "mse" in result.metrics
     assert "T_orig" not in result.metrics
-    assert result.extra_info["frame_length"] == 320
-    assert result.extra_info["train_clips"] == 6
+    info = task.examine_data(train_dataset, test_dataset)
+    assert info["frame_length"] == 320
+    assert info["train_clips"] == 8
+    assert info["test_clips"] == 4
 
 
 def test_frame_regression_string_regressor_raises():
