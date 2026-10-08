@@ -223,28 +223,6 @@ task_tf = SequenceModelingTask(
 
 ---
 
-## Dynamic Metadata Wrappers
-
-You can dynamically annotate existing audio datasets with metadata labels required by benchmark tasks by subclassing `BaseMetadataWrapper`. Wrappers include built-in in-memory caching (`cache=True`) so annotations are computed only once per sample, and support precomputing or chaining.
-
-```python
-from audio_benchmark import BaseMetadataWrapper
-
-
-class CustomMetadataWrapper(BaseMetadataWrapper):
-    def __init__(self, dataset, key="custom_label", cache=True):
-        super().__init__(dataset=dataset, key=key, cache=cache)
-
-    def generate(self, waveform, sample_rate, metadata):
-        # Generate and return custom metadata value
-        return 1
-
-
-dataset_annotated = CustomMetadataWrapper(dataset)
-```
-
----
-
 ## Quickstart Example
 
 Here is a complete, minimal example using dummy models and datasets included with the package:

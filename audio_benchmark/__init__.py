@@ -46,14 +46,10 @@ from audio_benchmark.tasks import (
     levenshtein_distance,
 )
 from audio_benchmark.utils import resolve_device, to_numpy
-from audio_benchmark.wrappers import (
-    BaseMetadataWrapper,
-)
 
 __all__ = [
     "AudioBenchmark",
     "BaseClassifier",
-    "BaseMetadataWrapper",
     "BaseRegressor",
     "BaseSequenceProbe",
     "BaseTask",
