@@ -72,7 +72,8 @@ def extract_representations(
         return torch.empty(0, 0, 0, dtype=torch.float32), []
 
     target_device = resolve_device(device)
-    print(f"Extracting representations on device: {target_device}")
+    if show_progress:
+        print(f"Extracting representations on device: {target_device}")
     model = model.to(target_device)
     prev_training_mode = model.training
     model.eval()

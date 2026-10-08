@@ -48,9 +48,6 @@ from audio_benchmark.tasks import (
 from audio_benchmark.utils import resolve_device, to_numpy
 from audio_benchmark.wrappers import (
     BaseMetadataWrapper,
-    PhonemeWrapper,
-    VoiceActivityWrapper,
-    WhisperTranscriptionWrapper,
 )
 
 __all__ = [
@@ -79,7 +76,6 @@ __all__ = [
     "LinearBenchmarkRegressor",
     "MLPBenchmarkClassifier",
     "MLPBenchmarkRegressor",
-    "PhonemeWrapper",
     "RegressionTask",
     "RepresentationCache",
     "SequenceModelingTask",
@@ -87,8 +83,6 @@ __all__ = [
     "TransformerBenchmarkClassifier",
     "TransformerBenchmarkRegressor",
     "TransformerDecoderProbe",
-    "VoiceActivityWrapper",
-    "WhisperTranscriptionWrapper",
     "compute_token_error_rate",
     "downsample_sequence",
     "extract_representations",

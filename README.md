@@ -225,67 +225,22 @@ task_tf = SequenceModelingTask(
 
 ## Dynamic Metadata Wrappers
 
-You can dynamically annotate existing audio datasets with metadata labels required by benchmark tasks. Wrappers can be used independently or chained together, and include built-in in-memory caching (`cache=True`) so annotations are computed only once per sample.
-
-### 1. `WhisperTranscriptionWrapper`
-Adds text transcriptions using the OpenAI Whisper model (defaults to `"small"`). Audio of any sample rate is automatically resampled to 16 kHz.
-
-- **Added Key**: `'transcription'` (stored in `item["metadata"]`).
-- **Parameters**:
-  - `model_name` (`str`, default `"small"`): Whisper model variant (`"small"`, `"base"`, `"tiny"`).
-  - `device` (`str | None`, default `None`): Device to run Whisper on (`"cuda"` if available, else `"cpu"`).
-  - `language` (`str | None`, default `None`): Optional language code (e.g. `"en"` or auto-detect).
-  - `key` (`str`, default `"transcription"`): Target metadata key.
-  - `cache` (`bool`, default `True`): In-memory caching for generated transcriptions.
+You can dynamically annotate existing audio datasets with metadata labels required by benchmark tasks by subclassing `BaseMetadataWrapper`. Wrappers include built-in in-memory caching (`cache=True`) so annotations are computed only once per sample, and support precomputing or chaining.
 
 ```python
-from audio_benchmark import WhisperTranscriptionWrapper
+from audio_benchmark import BaseMetadataWrapper
 
-dataset_with_text = WhisperTranscriptionWrapper(dataset, model_name="small")
-```
 
-### 2. `VoiceActivityWrapper`
-Generates sample-by-sample voice activity detection (VAD) labels for each input in the raw waveform. For a waveform of length $T$, it produces a binary sequence of length $T$ (1 if speaking, 0 if silent), directly compatible with `FrameClassificationTask`.
+class CustomMetadataWrapper(BaseMetadataWrapper):
+    def __init__(self, dataset, key="custom_label", cache=True):
+        super().__init__(dataset=dataset, key=key, cache=cache)
 
-- **Added Key**: `'frame_labels'` (or custom via `key`).
-- **Parameters**:
-  - `method` (`str`, default `"silero"`): `"silero"` (deep learning Silero VAD) or `"energy"` (short-time energy detector).
-  - `threshold` (`float`, default `0.5`): Speech detection sensitivity threshold.
-  - `key` (`str`, default `"frame_labels"`): Target metadata key.
-  - `cache` (`bool`, default `True`): In-memory caching.
+    def generate(self, waveform, sample_rate, metadata):
+        # Generate and return custom metadata value
+        return 1
 
-```python
-from audio_benchmark import VoiceActivityWrapper
 
-# Adds binary frame labels (length T) matching raw audio waveform length
-dataset_with_vad = VoiceActivityWrapper(dataset, method="silero")
-```
-
-### 3. `PhonemeWrapper`
-Generates discrete phoneme token sequences (e.g. `['HH', 'AH0', 'L', 'OW1']`) compatible with `SequenceModelingTask`. Converts text transcriptions via Grapheme-to-Phoneme (`g2p_en`). If text is not already present in the dataset, it automatically transcribes the audio waveform using Whisper first.
-
-- **Added Key**: `'tokens'` (or custom via `key`).
-- **Parameters**:
-  - `key` (`str`, default `"tokens"`): Target metadata key for the phoneme sequence.
-  - `text_key` (`str`, default `"transcription"`): Metadata key to check for existing text.
-  - `drop_punctuation` (`bool`, default `True`): Filter out non-phonemic punctuation marks.
-  - `strip_stress` (`bool`, default `False`): Strip ARPAbet stress numbers (e.g. `'AH0'` -> `'AH'`).
-  - `cache` (`bool`, default `True`): In-memory caching.
-
-```python
-from audio_benchmark import PhonemeWrapper
-
-# Transcribes with Whisper (if text absent) and converts to phonemes
-dataset_with_phonemes = PhonemeWrapper(dataset, drop_punctuation=True)
-```
-
-### Chaining Wrappers
-Wrappers can be chained together:
-
-```python
-dataset_annotated = VoiceActivityWrapper(
-    PhonemeWrapper(WhisperTranscriptionWrapper(dataset, model_name="small"))
-)
+dataset_annotated = CustomMetadataWrapper(dataset)
 ```
 
 ---

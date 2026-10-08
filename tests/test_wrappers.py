@@ -13,10 +13,7 @@ from audio_benchmark import (
     DummyAudioModel,
     FrameClassificationTask,
     KNNBenchmarkClassifier,
-    PhonemeWrapper,
     SequenceModelingTask,
-    VoiceActivityWrapper,
-    WhisperTranscriptionWrapper,
     validate_dataset,
 )
 
@@ -94,143 +91,22 @@ def test_base_wrapper_caching_and_overwrite():
     assert wrapper_overwrite.call_count == 1
 
 
-def test_whisper_wrapper_with_transcribe_fn():
-    data = [
-        (torch.zeros(16000), 16000, {}),
-        (torch.zeros(24000), 24000, {}),
-    ]
-    raw_ds = SimpleAudioDataset(data)
-
-    def mock_transcribe(wav, sr):
-        assert wav.ndim in (1, 2)
-        assert sr in (16000, 24000)
-        return "the quick brown fox"
-
-    wrapper = WhisperTranscriptionWrapper(
-        raw_ds,
-        key="transcription",
-        transcribe_fn=mock_transcribe,
-    )
-    validate_dataset(wrapper)
-
-    item0 = wrapper[0]
-    assert item0["metadata"]["transcription"] == "the quick brown fox"
-    assert "waveform" in item0
-    assert "sample_rate" in item0
-
-
-def test_whisper_wrapper_real_small_inference():
-    # Test real Whisper small model inference on silent audio
-    wav = torch.zeros(16000, dtype=torch.float32)
-    raw_ds = SimpleAudioDataset([(wav, 16000, {})])
-
-    wrapper = WhisperTranscriptionWrapper(
-        raw_ds,
-        model_name="small",
-        device="cpu",
-        language="en",
-    )
-    item = wrapper[0]
-    assert "transcription" in item["metadata"]
-    assert isinstance(item["metadata"]["transcription"], str)
-
-
-def test_voice_activity_wrapper_lengths_and_methods():
-    T_16k = 16000
-    T_24k = 24000
-
-    # 1. Silero method on 16kHz
-    wav_16k = torch.zeros(T_16k, dtype=torch.float32)
-    raw_ds_16k = SimpleAudioDataset([(wav_16k, 16000, {})])
-    vad_silero = VoiceActivityWrapper(raw_ds_16k, method="silero")
-
-    item_silero = vad_silero[0]
-    vad_labels = item_silero["metadata"]["frame_labels"]
-    assert isinstance(vad_labels, list)
-    assert len(vad_labels) == T_16k
-    # All zeros for silent audio
-    assert all(x in (0, 1) for x in vad_labels)
-    assert sum(vad_labels) == 0
-
-    # 2. Silero method on different sample rate (resampling to 16k and projecting back to T)
-    wav_24k = torch.zeros(T_24k, dtype=torch.float32)
-    raw_ds_24k = SimpleAudioDataset([(wav_24k, 24000, {})])
-    vad_resampled = VoiceActivityWrapper(raw_ds_24k, method="silero")
-    item_resampled = vad_resampled[0]
-    assert len(item_resampled["metadata"]["frame_labels"]) == T_24k
-
-    # 3. Energy method
-    wav_signal = torch.zeros(8000, dtype=torch.float32)
-    wav_signal[2000:6000] = 1.0  # signal burst in middle
-    raw_ds_signal = SimpleAudioDataset([(wav_signal, 16000, {})])
-    vad_energy = VoiceActivityWrapper(
-        raw_ds_signal,
-        method="energy",
-        threshold=0.5,
-        return_tensor=True,
-    )
-    item_energy = vad_energy[0]
-    vad_tensor = item_energy["metadata"]["frame_labels"]
-    assert isinstance(vad_tensor, torch.Tensor)
-    assert vad_tensor.shape == (8000,)
-    assert 1 in vad_tensor.tolist()
-    assert 0 in vad_tensor.tolist()
-
-    # 4. Custom vad_fn
-    def custom_vad(wav, sr):
-        length = wav.squeeze().shape[0]
-        return [1] * length
-
-    vad_custom = VoiceActivityWrapper(raw_ds_16k, vad_fn=custom_vad)
-    assert sum(vad_custom[0]["metadata"]["frame_labels"]) == T_16k
-
-
-def test_phoneme_wrapper_from_existing_text():
-    data = [
-        (torch.zeros(16000), 16000, {"transcription": "Hello, world!"}),
-        (torch.zeros(16000), 16000, {"text": "A quick test."}),
-    ]
-    raw_ds = SimpleAudioDataset(data)
-
-    wrapper = PhonemeWrapper(raw_ds, drop_punctuation=True, strip_stress=False)
-    validate_dataset(wrapper)
-
-    item0 = wrapper[0]
-    tokens0 = item0["metadata"]["tokens"]
-    assert isinstance(tokens0, list)
-    assert len(tokens0) > 0
-    # Ensure no punctuation characters in tokens
-    assert all("," not in t and "!" not in t and " " not in t for t in tokens0)
-
-    # Test strip_stress
-    wrapper_no_stress = PhonemeWrapper(raw_ds, strip_stress=True)
-    tokens_no_stress = wrapper_no_stress[0]["metadata"]["tokens"]
-    assert all(not any(char.isdigit() for char in t) for t in tokens_no_stress)
-
-    # Item 1 with "text" key
-    item1 = wrapper[1]
-    assert len(item1["metadata"]["tokens"]) > 0
-
-
-def test_phoneme_wrapper_auto_transcribe_fallback():
-    # When text is absent, PhonemeWrapper transcribes audio dynamically via Whisper
-    data = [(torch.zeros(16000), 16000, {})]
-    raw_ds = SimpleAudioDataset(data)
-
-    def mock_transcribe(wav, sr):
-        return "Speech recognized"
-
-    wrapper = PhonemeWrapper(raw_ds, transcribe_fn=mock_transcribe)
-    item = wrapper[0]
-    # Check that transcription was recorded
-    assert item["metadata"]["transcription"] == "Speech recognized"
-    tokens = item["metadata"]["tokens"]
-    assert isinstance(tokens, list)
-    assert len(tokens) > 0
-
-
 def test_wrapper_chaining_and_task_execution():
-    # 1. Create dummy datasets
+    class DummyFrameLabelWrapper(BaseMetadataWrapper):
+        def __init__(self, dataset: Dataset):
+            super().__init__(dataset=dataset, key="frame_labels")
+
+        def generate(self, waveform, sample_rate, metadata):
+            length = waveform.squeeze().shape[0] if waveform.ndim > 1 else len(waveform)
+            return [0] * length
+
+    class DummyTokenWrapper(BaseMetadataWrapper):
+        def __init__(self, dataset: Dataset):
+            super().__init__(dataset=dataset, key="tokens")
+
+        def generate(self, waveform, sample_rate, metadata):
+            return ["a", "b", "c"]
+
     raw_dataset = DummyAudioDataset(
         num_samples=10, audio_length=16000, name="wrapped_dummy_train"
     )
@@ -238,42 +114,27 @@ def test_wrapper_chaining_and_task_execution():
         num_samples=4, audio_length=16000, name="wrapped_dummy_test"
     )
 
-    # 2. Chain wrappers together
-    def mock_transcribe(wav, sr):
-        return "hello deep learning benchmark"
+    # Chain custom wrappers together
+    ds_wrapped = DummyTokenWrapper(DummyFrameLabelWrapper(raw_dataset))
+    test_wrapped = DummyTokenWrapper(DummyFrameLabelWrapper(raw_testset))
 
-    ds_with_text = WhisperTranscriptionWrapper(
-        raw_dataset, transcribe_fn=mock_transcribe
-    )
-    ds_with_phonemes = PhonemeWrapper(ds_with_text, drop_punctuation=True)
-    ds_with_vad = VoiceActivityWrapper(ds_with_phonemes, method="energy", threshold=0.1)
+    validate_dataset(ds_wrapped)
+    validate_dataset(test_wrapped)
 
-    test_with_text = WhisperTranscriptionWrapper(
-        raw_testset, transcribe_fn=mock_transcribe
-    )
-    test_with_phonemes = PhonemeWrapper(test_with_text, drop_punctuation=True)
-    test_with_vad = VoiceActivityWrapper(
-        test_with_phonemes, method="energy", threshold=0.1
-    )
-
-    validate_dataset(ds_with_vad)
-    validate_dataset(test_with_vad)
-
-    sample = ds_with_vad[0]
-    assert "transcription" in sample["metadata"]
+    sample = ds_wrapped[0]
     assert "tokens" in sample["metadata"]
     assert "frame_labels" in sample["metadata"]
     assert len(sample["metadata"]["frame_labels"]) == 16000
 
-    # 3. Test FrameClassificationTask directly on the VAD-annotated dataset
     model = DummyAudioModel(representation_dim=32)
 
+    # Test FrameClassificationTask on frame_labels
     vad_task = FrameClassificationTask(
         classifier=KNNBenchmarkClassifier(), label_key="frame_labels"
     )
     benchmark_vad = AudioBenchmark(
-        dataset=ds_with_vad,
-        testset=test_with_vad,
+        dataset=ds_wrapped,
+        testset=test_wrapped,
         task=vad_task,
         cache_dir=".test_wrapper_cache",
         enable_cache=False,
@@ -286,13 +147,13 @@ def test_wrapper_chaining_and_task_execution():
     assert "accuracy" in vad_res.metrics
     assert vad_res.metrics["accuracy"] >= 0.0
 
-    # 4. Test SequenceModelingTask directly on the phoneme-annotated dataset
+    # Test SequenceModelingTask on tokens
     seq_task = SequenceModelingTask(
         probe=CTCSequenceProbe(epochs=5, batch_size=4), target_key="tokens"
     )
     benchmark_seq = AudioBenchmark(
-        dataset=ds_with_vad,
-        testset=test_with_vad,
+        dataset=ds_wrapped,
+        testset=test_wrapped,
         task=seq_task,
         cache_dir=".test_wrapper_cache",
         enable_cache=False,
