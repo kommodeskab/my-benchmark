@@ -30,5 +30,11 @@ This repository implements a modular benchmark suite for downstream audio tasks 
    - Only write tests for important functionality, mathematical/protocol invariants, edge cases, and public APIs.
    - Avoid bloated or redundant tests for trivial getters or pass-through properties.
 
-7. **Skill Reference**:
+7. **Strict Validation Without Auto-Fixing or Inference**:
+   - The user must explicitly pass arguments and correctly formatted information to the library.
+   - Check if inputs, datasets, and arguments meet requirements, raising clear and explicit errors when invalid.
+   - Never try to fix malformed data silently (e.g., auto-reshaping audio, coercing types like float sample rates to int).
+   - Never try to infer information (e.g., inferring dataset names or guessing metadata keys).
+
+8. **Skill Reference**:
    - Detailed examples and guidelines can be found in the skill at [`.agents/skills/audio-benchmark-dev/SKILL.md`](.agents/skills/audio-benchmark-dev/SKILL.md).

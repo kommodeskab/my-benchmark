@@ -19,6 +19,7 @@ def test_benchmark_end_to_end_dummy(tmp_path):
         dataset=train_dataset,
         testset=test_dataset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=True,
     )
@@ -80,6 +81,7 @@ def test_benchmark_requires_testset(tmp_path):
         AudioBenchmark(
             dataset=dataset,
             task=task,
+            dataset_name="dummy_audio",
             cache_dir=tmp_path,
             enable_cache=False,
         )
@@ -89,6 +91,32 @@ def test_benchmark_requires_testset(tmp_path):
             dataset=dataset,
             testset=None,
             task=task,
+            dataset_name="dummy_audio",
+            cache_dir=tmp_path,
+            enable_cache=False,
+        )
+
+
+def test_benchmark_requires_dataset_name(tmp_path):
+    dataset = DummyAudioDataset(num_samples=6, audio_length=320, num_classes=2)
+    testset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
+
+    with pytest.raises(TypeError):
+        AudioBenchmark(
+            dataset=dataset,
+            testset=testset,
+            task=task,
+            cache_dir=tmp_path,
+            enable_cache=False,
+        )
+
+    with pytest.raises(ValueError, match="dataset_name must be a non-empty string"):
+        AudioBenchmark(
+            dataset=dataset,
+            testset=testset,
+            task=task,
+            dataset_name="",
             cache_dir=tmp_path,
             enable_cache=False,
         )
@@ -104,6 +132,7 @@ def test_benchmark_requires_base_task(tmp_path):
             dataset=dataset,
             testset=testset,
             task="global_classification",
+            dataset_name="dummy_audio",
             cache_dir=tmp_path,
             enable_cache=False,
         )
@@ -122,6 +151,7 @@ def test_benchmark_with_custom_task_instance(tmp_path):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )
@@ -147,6 +177,7 @@ def test_benchmark_show_progress_in_run(tmp_path):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )
@@ -171,6 +202,7 @@ def test_benchmark_run_requires_model(tmp_path):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )
@@ -194,6 +226,7 @@ def test_benchmark_run_rejects_dataset_args(tmp_path):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )

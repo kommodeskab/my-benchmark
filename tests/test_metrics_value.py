@@ -217,6 +217,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
         dataset=dataset,
         testset=testset,
         task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )
@@ -233,6 +234,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=LinearBenchmarkRegressor()),
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )

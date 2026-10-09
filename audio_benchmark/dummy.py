@@ -75,14 +75,11 @@ class DummyAudioDataset(Dataset):
             tokens = [f"ph_{(label + k) % num_classes}" for k in range(seq_len)]
 
             metadata = {
-                "id": f"sample_{idx:04d}",
                 "label": label,
-                "label_name": f"class_{label}",
                 "target": float(freq),
                 "frame_labels": frame_labels,
                 "frame_targets": frame_targets,
                 "tokens": tokens,
-                "sample_rate": sample_rate,
             }
             self.data.append(
                 {

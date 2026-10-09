@@ -261,6 +261,7 @@ def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )

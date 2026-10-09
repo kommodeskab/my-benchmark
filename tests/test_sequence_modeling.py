@@ -229,6 +229,7 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
         dataset=train_dataset,
         testset=test_dataset,
         task=task_ctc,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=True,
     )
@@ -256,6 +257,7 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
         dataset=train_dataset,
         testset=test_dataset,
         task=task_tf,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=True,
     )

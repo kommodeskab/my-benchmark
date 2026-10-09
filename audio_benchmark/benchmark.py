@@ -9,7 +9,6 @@ import torch
 from torch.utils.data import Dataset
 
 from audio_benchmark.cache import RepresentationCache
-from audio_benchmark.dataset import get_dataset_name
 from audio_benchmark.extractor import extract_representations
 from audio_benchmark.tasks.base import BaseTask
 
@@ -94,7 +93,7 @@ class AudioBenchmark:
         dataset: Dataset,
         testset: Dataset,
         task: BaseTask,
-        dataset_name: str | None = None,
+        dataset_name: str,
         testset_name: str | None = None,
         cache_dir: str | Path = ".benchmark_cache",
         enable_cache: bool = True,
@@ -105,13 +104,15 @@ class AudioBenchmark:
             dataset: Audio dataset returning samples and metadata for training.
             testset: Audio dataset returning samples and metadata for testing.
             task: Task to evaluate on (must be an instance of BaseTask).
-            dataset_name: Optional explicit name for the train dataset. Inferred if not given.
-            testset_name: Optional explicit name for the test dataset. Inferred if not given.
+            dataset_name: Explicit name for the dataset.
+            testset_name: Optional explicit name for the test dataset. If not provided,
+                defaults to f"{dataset_name}_test" (with train dataset as f"{dataset_name}_train").
             cache_dir: Filesystem directory for caching representations.
             enable_cache: Whether to use caching for computed representations.
 
         Raises:
             TypeError: If task is not an instance of BaseTask, or if dataset/testset is None.
+            ValueError: If dataset_name is not a non-empty string.
         """
         if dataset is None:
             raise TypeError(
@@ -127,25 +128,16 @@ class AudioBenchmark:
             raise TypeError(
                 f"task must be an instance of BaseTask, got {type(task).__name__}."
             )
+        if not isinstance(dataset_name, str) or not dataset_name.strip():
+            raise ValueError("dataset_name must be a non-empty string.")
 
-        if dataset_name is not None and testset_name is not None:
+        dataset_name = dataset_name.strip()
+        if testset_name is not None and testset_name.strip():
             resolved_dataset_name = dataset_name
-            resolved_testset_name = testset_name
-        elif dataset_name is not None:
+            resolved_testset_name = testset_name.strip()
+        else:
             resolved_dataset_name = f"{dataset_name}_train"
             resolved_testset_name = f"{dataset_name}_test"
-        elif testset_name is not None:
-            resolved_dataset_name = f"{get_dataset_name(dataset)}_train"
-            resolved_testset_name = testset_name
-        else:
-            ds_name = get_dataset_name(dataset)
-            ts_name = get_dataset_name(testset)
-            if ds_name == ts_name:
-                resolved_dataset_name = f"{ds_name}_train"
-                resolved_testset_name = f"{ts_name}_test"
-            else:
-                resolved_dataset_name = ds_name
-                resolved_testset_name = ts_name
 
         task.validate_dataset(dataset)
         task.validate_dataset(testset)

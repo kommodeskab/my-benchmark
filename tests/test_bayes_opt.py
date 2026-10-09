@@ -278,6 +278,7 @@ def test_bayes_opt_in_task_and_benchmark(tmp_path):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=False,
     )
@@ -321,6 +322,7 @@ def test_bayes_opt_regression_task_and_benchmark(tmp_path):
         dataset=dataset,
         testset=testset,
         task=task,
+        dataset_name="dummy_regression",
         cache_dir=tmp_path,
         enable_cache=False,
     )

@@ -48,13 +48,13 @@ Any `torch.nn.Module` that accepts raw audio of shape `(B, 1, T)` and returns re
 Your PyTorch `Dataset.__getitem__` must return a dictionary with three keys:
 ```python
 {
-    "waveform": audio_tensor,  # torch.Tensor of shape (1, T) or (T,)
-    "sample_rate": sample_rate,  # int or float (e.g. 16000)
+    "waveform": audio_tensor,  # torch.Tensor of shape (1, T)
+    "sample_rate": sample_rate,  # int (e.g. 16000)
     "metadata": metadata_dict,  # standard Python dict with ground truth targets
 }
 ```
-- `"waveform"`: A 1D `(T,)` or 2D mono `(1, T)` `torch.Tensor` containing raw audio samples.
-- `"sample_rate"`: Sampling rate as a positive integer or float (e.g. `16000`).
+- `"waveform"`: A 2D mono `(1, T)` `torch.Tensor` containing raw audio samples.
+- `"sample_rate"`: Sampling rate as a positive integer (e.g. `16000`).
 - `"metadata"`: A standard Python `dict` containing the ground truth targets for the task.
 
 If your raw dataset has a different format, wrap it:
@@ -73,7 +73,9 @@ class MyAudioDatasetWrapper(Dataset):
     def __getitem__(self, idx):
         item = self.raw_data[idx]
         return {
-            "waveform": torch.as_tensor(item["audio"], dtype=torch.float32),
+            "waveform": torch.as_tensor(item["audio"], dtype=torch.float32).unsqueeze(
+                0
+            ),
             "sample_rate": item.get("sample_rate", 16000),
             "metadata": {
                 "label": item["class_id"],  # For global classification
@@ -86,6 +88,25 @@ class MyAudioDatasetWrapper(Dataset):
             },
         }
 ```
+
+### Standardizing with `BaseDataset`
+
+Use `BaseDataset` to automatically resample audio to a unified `sample_rate` and pad/crop waveforms and frame-level metadata to a fixed `length` in samples:
+
+```python
+from audio_benchmark import BaseDataset
+
+# Standardize to 16kHz and fixed 1-second clips (16,000 samples)
+standardized_dataset = BaseDataset(
+    dataset=my_raw_dataset,
+    dataset_name="my_dataset",
+    sample_rate=16000,
+    length=16000,
+)
+```
+- Audio waveforms are resampled and padded/cropped to `(1, length)`.
+- Frame metadata (`frame_targets` and `frame_labels`) is resampled, padded, and cropped to match.
+- Non-frame metadata (`label`, `target`, and `tokens`) is safely preserved without cropping.
 
 ---
 
@@ -254,6 +275,7 @@ bench_clf = AudioBenchmark(
     dataset=train_dataset,
     testset=test_dataset,
     task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
+    dataset_name="speech",
     cache_dir=".benchmark_cache",
     enable_cache=True,
 )
@@ -264,6 +286,7 @@ bench_reg = AudioBenchmark(
     dataset=train_dataset,
     testset=test_dataset,
     task=RegressionTask(regressor=LinearBenchmarkRegressor()),
+    dataset_name="speech",
     cache_dir=".benchmark_cache",
     enable_cache=True,
 )
@@ -273,6 +296,7 @@ bench_seq = AudioBenchmark(
     dataset=train_dataset,
     testset=test_dataset,
     task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=10)),
+    dataset_name="speech",
     cache_dir=".benchmark_cache",
     enable_cache=True,
 )
@@ -326,6 +350,7 @@ benchmark = AudioBenchmark(
     dataset=train_dataset,
     testset=test_dataset,
     task=task_clf,
+    dataset_name="speech",
 )
 result = benchmark.run(model=my_model, model_name="encoder")
 

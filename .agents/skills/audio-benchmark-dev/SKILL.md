@@ -117,7 +117,22 @@ X_norm = self.scaler.fit_transform(X_flat).reshape(orig_shape)
 
 ---
 
-## 7. Verification & Tooling
+## 7. Strict Input Validation (Check, Never Fix or Infer)
+
+- **The user must explicitly pass arguments and correctly formatted information**:
+  - The library must not try to guess what the user meant.
+  - Require explicit parameter values rather than inferring them from environment, class names, or attributes (e.g., explicit `dataset_name`, explicit model instances).
+- **Check if inputs are valid, but never try to fix them**:
+  - Check that dataset items have the exact expected types and shapes (e.g. waveform strictly `(1, T)` `torch.Tensor`, `sample_rate` strictly a positive `int`).
+  - Do NOT reshape 1D audio to 2D automatically or convert channels; raise `InvalidDatasetError` instead.
+  - Do NOT cast/coerce float sample rates to `int`; check `isinstance(sr, int)` directly.
+  - Do NOT infer metadata keys or fall back to guessing; assume metadata strictly contains the supported keys (`label`, `target`, `frame_labels`, `frame_targets`, `tokens`).
+- **Fail fast with actionable errors**:
+  - When validation fails, raise an informative exception describing what was expected, what was received, and how the user can correctly wrap or supply the input.
+
+---
+
+## 8. Verification & Tooling
 
 After generating or modifying code, always verify:
 1. **Formatting**: `uv run ruff format .`

@@ -123,6 +123,7 @@ def test_benchmark_runner_with_regression_task(tmp_path):
         dataset=train_dataset,
         testset=test_dataset,
         task=task,
+        dataset_name="dummy_audio",
         cache_dir=tmp_path,
         enable_cache=True,
     )

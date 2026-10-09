@@ -11,7 +11,7 @@ from audio_benchmark.classifiers import (
     TransformerBenchmarkClassifier,
 )
 from audio_benchmark.dataset import (
-    get_dataset_name,
+    BaseDataset,
     parse_dataset_item,
     validate_dataset,
 )
@@ -50,6 +50,7 @@ from audio_benchmark.utils import resolve_device, to_numpy
 __all__ = [
     "AudioBenchmark",
     "BaseClassifier",
+    "BaseDataset",
     "BaseRegressor",
     "BaseSequenceProbe",
     "BaseTask",
@@ -82,7 +83,6 @@ __all__ = [
     "compute_token_error_rate",
     "downsample_sequence",
     "extract_representations",
-    "get_dataset_name",
     "levenshtein_distance",
     "parse_dataset_item",
     "resolve_device",

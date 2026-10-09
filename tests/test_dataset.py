@@ -5,8 +5,8 @@ import torch
 from torch.utils.data import Dataset
 
 from audio_benchmark.dataset import (
+    BaseDataset,
     collate_audio_batch,
-    get_dataset_name,
     parse_dataset_item,
     validate_dataset,
 )
@@ -73,19 +73,19 @@ def test_parse_dataset_item_valid_dict():
     assert parsed["metadata"] == meta
 
 
-def test_parse_dataset_item_1d_tensor():
+def test_parse_dataset_item_rejects_1d_tensor():
     item = {
         "waveform": torch.randn(800),
         "sample_rate": 16000,
         "metadata": {"label": 1},
     }
-    parsed = parse_dataset_item(item)
-    assert parsed["waveform"].shape == (1, 800)
+    with pytest.raises(InvalidDatasetError, match="shape \\(1, T\\)"):
+        parse_dataset_item(item)
 
 
-def test_parse_dataset_item_int_waveform_converted_to_float():
+def test_parse_dataset_item_valid_float_waveform():
     item = {
-        "waveform": torch.zeros((1, 800), dtype=torch.int32),
+        "waveform": torch.zeros((1, 800), dtype=torch.float32),
         "sample_rate": 16000,
         "metadata": {"label": 0},
     }
@@ -132,7 +132,17 @@ def test_parse_dataset_item_rejects_non_numeric_sample_rate():
         "sample_rate": "sixteen_thousand",
         "metadata": {"label": 0},
     }
-    with pytest.raises(InvalidDatasetError, match="positive integer or float"):
+    with pytest.raises(InvalidDatasetError, match="positive integer"):
+        parse_dataset_item(item)
+
+
+def test_parse_dataset_item_rejects_float_sample_rate():
+    item = {
+        "waveform": torch.randn(1, 800),
+        "sample_rate": 16000.0,
+        "metadata": {"label": 0},
+    }
+    with pytest.raises(InvalidDatasetError, match="positive integer"):
         parse_dataset_item(item)
 
 
@@ -152,7 +162,7 @@ def test_parse_dataset_item_invalid_audio_channels():
         "sample_rate": 16000,
         "metadata": {"label": 0},
     }
-    with pytest.raises(InvalidDatasetError, match="must have 1 channel"):
+    with pytest.raises(InvalidDatasetError, match="shape \\(1, T\\)"):
         parse_dataset_item(item)
 
 
@@ -233,9 +243,193 @@ def test_collate_audio_batch_variable_length_padding():
     assert torch.all(audio_batch[0, 0, 500:] == 0.0)
 
 
-def test_get_dataset_name():
-    ds = ValidDictDataset()
-    assert get_dataset_name(ds) == "ValidDictDataset"
+class RichMetadataDataset(Dataset):
+    """Synthetic dataset with allowed metadata types for testing BaseDataset."""
 
-    ds.name = "custom_dataset_name"
-    assert get_dataset_name(ds) == "custom_dataset_name"
+    def __init__(self, audio_length: int = 16000, sample_rate: int = 16000):
+        self.audio_length = audio_length
+        self.sample_rate = sample_rate
+
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, idx: int):
+        return {
+            "waveform": torch.ones(1, self.audio_length) * (idx + 1),
+            "sample_rate": self.sample_rate,
+            "metadata": {
+                "label": idx,
+                "tokens": ["word_a", "word_b", "word_c"],
+                "target": 42.0,
+                "frame_targets": [1.5 * (idx + 1)] * self.audio_length,
+                "frame_labels": [idx] * self.audio_length,
+            },
+        }
+
+
+def test_base_dataset_resample_only():
+    raw_ds = RichMetadataDataset(audio_length=16000, sample_rate=16000)
+    wrapped = BaseDataset(raw_ds, dataset_name="rich_ds", sample_rate=8000, length=None)
+    assert len(wrapped) == 3
+    assert wrapped.dataset_name == "rich_ds"
+    assert wrapped.name == "rich_ds"
+
+    item = wrapped[0]
+    assert item["waveform"].shape == (1, 8000)
+    assert item["sample_rate"] == 8000
+    assert len(item["metadata"]["frame_targets"]) == 8000
+    assert len(item["metadata"]["frame_labels"]) == 8000
+    # tokens, label, and target should not be cropped or modified
+    assert item["metadata"]["tokens"] == ["word_a", "word_b", "word_c"]
+    assert item["metadata"]["label"] == 0
+    assert item["metadata"]["target"] == 42.0
+
+
+def test_base_dataset_crop_waveform_and_metadata():
+    raw_ds = RichMetadataDataset(audio_length=20000, sample_rate=16000)
+    wrapped = BaseDataset(
+        raw_ds, dataset_name="rich_ds", sample_rate=16000, length=16000
+    )
+
+    item = wrapped[0]
+    assert item["waveform"].shape == (1, 16000)
+    assert item["sample_rate"] == 16000
+    assert len(item["metadata"]["frame_targets"]) == 16000
+    assert len(item["metadata"]["frame_labels"]) == 16000
+    # tokens, label, target must not be cropped
+    assert item["metadata"]["tokens"] == ["word_a", "word_b", "word_c"]
+    assert item["metadata"]["label"] == 0
+
+
+def test_base_dataset_pad_waveform_and_metadata():
+    raw_ds = RichMetadataDataset(audio_length=10000, sample_rate=16000)
+    wrapped = BaseDataset(
+        raw_ds, dataset_name="rich_ds", sample_rate=16000, length=16000
+    )
+
+    item = wrapped[0]
+    assert item["waveform"].shape == (1, 16000)
+    assert torch.all(item["waveform"][0, 10000:] == 0.0)
+    assert len(item["metadata"]["frame_targets"]) == 16000
+    assert len(item["metadata"]["frame_labels"]) == 16000
+    # verify zero padding in metadata
+    assert item["metadata"]["frame_targets"][10000:] == [0.0] * 6000
+    assert item["metadata"]["frame_labels"][10000:] == [0] * 6000
+    # tokens and label must remain unpadded / uncropped
+    assert item["metadata"]["tokens"] == ["word_a", "word_b", "word_c"]
+    assert item["metadata"]["label"] == 0
+
+
+def test_base_dataset_resample_and_crop():
+    raw_ds = RichMetadataDataset(audio_length=24000, sample_rate=16000)
+    wrapped = BaseDataset(raw_ds, dataset_name="rich_ds", sample_rate=8000, length=4000)
+
+    item = wrapped[0]
+    assert item["waveform"].shape == (1, 4000)
+    assert item["sample_rate"] == 8000
+    assert len(item["metadata"]["frame_targets"]) == 4000
+    assert len(item["metadata"]["frame_labels"]) == 4000
+    assert item["metadata"]["tokens"] == ["word_a", "word_b", "word_c"]
+
+
+def test_base_dataset_tensor_metadata():
+    class TensorFrameDataset(Dataset):
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.ones(1, 800),
+                "sample_rate": 16000,
+                "metadata": {
+                    "frame_targets": torch.ones(800, dtype=torch.float32),
+                    "tokens": ["tok"],
+                },
+            }
+
+    ds = TensorFrameDataset()
+    wrapped = BaseDataset(ds, dataset_name="tensor_ds", sample_rate=16000, length=400)
+    item = wrapped[0]
+
+    assert item["waveform"].shape == (1, 400)
+    assert isinstance(item["metadata"]["frame_targets"], torch.Tensor)
+    assert item["metadata"]["frame_targets"].shape == (400,)
+    assert item["metadata"]["tokens"] == ["tok"]
+
+
+def test_base_dataset_validation_errors():
+    ds = ValidDictDataset()
+
+    with pytest.raises(ValueError, match="dataset_name must be a non-empty string"):
+        BaseDataset(ds, dataset_name="", sample_rate=16000)
+
+    with pytest.raises(ValueError, match="sample_rate must be a positive integer"):
+        BaseDataset(ds, dataset_name="ds", sample_rate=-16000)
+
+    with pytest.raises(ValueError, match="length must be a positive integer"):
+        BaseDataset(ds, dataset_name="ds", sample_rate=16000, length=0)
+
+    with pytest.raises(InvalidDatasetError, match="must implement __len__"):
+        BaseDataset(object(), dataset_name="ds", sample_rate=16000)
+
+    with pytest.raises(InvalidDatasetError, match="cannot be a string or bytes"):
+        BaseDataset("not_a_dataset", dataset_name="ds", sample_rate=16000)
+
+
+def test_base_dataset_rejects_1d_waveform():
+    class OneDWaveformDataset(Dataset):
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1600),  # 1D waveform not allowed
+                "sample_rate": 16000,
+                "metadata": {"label": 0},
+            }
+
+    wrapped = BaseDataset(
+        OneDWaveformDataset(), dataset_name="bad_audio", sample_rate=16000
+    )
+    with pytest.raises(InvalidDatasetError, match="shape \\(1, T\\)"):
+        _ = wrapped[0]
+
+
+def test_base_dataset_rejects_empty_or_unknown_metadata():
+    class BadMetadataDataset(Dataset):
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 1600),
+                "sample_rate": 16000,
+                "metadata": {"unknown_key": "val"},
+            }
+
+    wrapped = BaseDataset(
+        BadMetadataDataset(), dataset_name="bad_meta", sample_rate=16000
+    )
+    with pytest.raises(
+        InvalidDatasetError, match="Metadata must contain at least one of"
+    ):
+        _ = wrapped[0]
+
+
+def test_base_dataset_task_compatibility():
+    from audio_benchmark.dummy import DummyAudioDataset
+    from audio_benchmark.regressors.models import LinearBenchmarkRegressor
+    from audio_benchmark.tasks.frame_regression import FrameRegressionTask
+
+    dummy_ds = DummyAudioDataset(num_samples=4, audio_length=16000, sample_rate=16000)
+    wrapped = BaseDataset(
+        dummy_ds, dataset_name="dummy_wrapped", sample_rate=8000, length=8000
+    )
+
+    task = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
+    task.validate_dataset(wrapped)
+
+    batch = [wrapped[0], wrapped[1]]
+    batched_audio, metadatas = collate_audio_batch(batch)
+    assert batched_audio.shape == (2, 1, 8000)
+    assert len(metadatas) == 2

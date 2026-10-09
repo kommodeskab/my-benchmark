@@ -48,6 +48,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name, batch_size=16)
@@ -56,6 +58,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=LinearBenchmarkRegressor()),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
@@ -66,6 +70,8 @@ def main():
         task=GlobalClassificationTask(
             classifier=TransformerBenchmarkClassifier(epochs=15)
         ),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
@@ -74,6 +80,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=TransformerBenchmarkRegressor(epochs=15)),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
@@ -82,6 +90,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=FrameClassificationTask(classifier=KNNBenchmarkClassifier()),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
@@ -90,6 +100,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=FrameRegressionTask(regressor=LinearBenchmarkRegressor()),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
@@ -98,6 +110,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=SequenceModelingTask(probe=CTCSequenceProbe(epochs=15)),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
@@ -106,6 +120,8 @@ def main():
         dataset=dataset,
         testset=testset,
         task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=15)),
+        dataset_name="synthetic_speech",
+        testset_name="synthetic_speech_test",
         cache_dir=".benchmark_cache",
         enable_cache=True,
     ).run(model=model, model_name=model_name)
