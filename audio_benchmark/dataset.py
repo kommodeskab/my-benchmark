@@ -141,7 +141,12 @@ def collate_audio_batch(
     """
     parsed_items = [parse_dataset_item(item) for item in batch]
     audios = [item["waveform"] for item in parsed_items]
-    metadatas = [item["metadata"] for item in parsed_items]
+    metadatas = []
+    for item in parsed_items:
+        meta = dict(item["metadata"])
+        if "audio_length" not in meta:
+            meta["audio_length"] = item["waveform"].shape[-1]
+        metadatas.append(meta)
 
     lengths = [audio.shape[-1] for audio in audios]
     max_len = max(lengths)
@@ -160,8 +165,9 @@ class BaseDataset(Dataset):
 
     Wraps an underlying dataset that returns dictionaries containing 'waveform' of shape (1, T),
     'sample_rate', and 'metadata'. Resamples audio to `sample_rate` and pads or crops to `length`
-    samples. Frame-level metadata ('frame_labels' and 'frame_targets') is resampled and padded/cropped
-    to match the audio waveform.
+    samples. When resampling audio, dictionary sample timestamps are scaled while uniform sequence
+    targets are left unchanged. When cropping or padding to `length`, dictionary timestamps >= length
+    are dropped, and uniform sequence targets are sliced or padded to match.
 
     Args:
         dataset: Underlying PyTorch-compatible dataset.
@@ -274,36 +280,63 @@ class BaseDataset(Dataset):
             waveform = torchaudio.functional.resample(
                 waveform, orig_freq=orig_sr, new_freq=self.sample_rate
             )
-            new_len = waveform.shape[-1]
-            if "frame_targets" in metadata:
-                metadata["frame_targets"] = self._resample_sequence(
-                    metadata["frame_targets"], new_len, mode="mean"
-                )
-            if "frame_labels" in metadata:
-                metadata["frame_labels"] = self._resample_sequence(
-                    metadata["frame_labels"], new_len, mode="mode"
-                )
+            ratio = self.sample_rate / orig_sr
+            for key in ("frame_targets", "frame_labels"):
+                if key in metadata:
+                    val = metadata[key]
+                    if isinstance(val, dict):
+                        scaled: dict[Any, Any] = {}
+                        for k, v in val.items():
+                            if isinstance(k, int):
+                                new_k = round(k * ratio)
+                            else:
+                                new_k = str(round(int(k) * ratio))
+                            scaled[new_k] = v
+                        metadata[key] = scaled
+                    # Uniform sequence targets remain unchanged per R4.
 
         if self.length is not None:
             cur_len = waveform.shape[-1]
             if cur_len > self.length:
                 waveform = waveform[..., : self.length]
-                if "frame_targets" in metadata:
-                    metadata["frame_targets"] = metadata["frame_targets"][: self.length]
-                if "frame_labels" in metadata:
-                    metadata["frame_labels"] = metadata["frame_labels"][: self.length]
+                for key in ("frame_targets", "frame_labels"):
+                    if key in metadata:
+                        val = metadata[key]
+                        if isinstance(val, dict):
+                            metadata[key] = {
+                                k: v
+                                for k, v in val.items()
+                                if (int(k) if isinstance(k, (int, str)) else k)
+                                < self.length
+                            }
+                        else:
+                            keep_len = (
+                                self.length
+                                if len(val) == cur_len
+                                else max(1, round(len(val) * self.length / cur_len))
+                            )
+                            metadata[key] = val[:keep_len]
             elif cur_len < self.length:
                 pad_amount = self.length - cur_len
                 waveform = torch.nn.functional.pad(waveform, (0, pad_amount), value=0.0)
-                if "frame_targets" in metadata:
-                    metadata["frame_targets"] = self._pad_sequence(
-                        metadata["frame_targets"], pad_amount, pad_val=0.0
-                    )
-                if "frame_labels" in metadata:
-                    metadata["frame_labels"] = self._pad_sequence(
-                        metadata["frame_labels"], pad_amount, pad_val=0
-                    )
+                pad_val_map = {"frame_targets": 0.0, "frame_labels": 0}
+                for key in ("frame_targets", "frame_labels"):
+                    if key in metadata:
+                        val = metadata[key]
+                        if isinstance(val, dict):
+                            pass
+                        else:
+                            target_pad = (
+                                pad_amount
+                                if len(val) == cur_len
+                                else round(len(val) * self.length / cur_len) - len(val)
+                            )
+                            if target_pad > 0:
+                                metadata[key] = self._pad_sequence(
+                                    val, target_pad, pad_val=pad_val_map.get(key, 0)
+                                )
 
+        metadata["audio_length"] = waveform.shape[-1]
         return {
             "waveform": waveform,
             "sample_rate": self.sample_rate,

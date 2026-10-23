@@ -70,10 +70,105 @@ def test_frame_classification_dataset_validation():
     task = FrameClassificationTask(
         classifier=KNNBenchmarkClassifier(), label_key="frame_labels"
     )
-    bad_ds = MismatchedFrameDataset()
+    # Arbitrary length 1D sequence (e.g. 50 elements for 100 audio samples) is now accepted
+    valid_seq_ds = MismatchedFrameDataset()
+    task.validate_dataset(valid_seq_ds)
 
-    with pytest.raises(InvalidDatasetError, match="Length mismatch in 'frame_labels'"):
-        task.validate_dataset(bad_ds)
+    # Valid dictionary targets dataset
+    class DictFrameDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_labels": {0: 0, 50: 1}},
+            }
+
+    task.validate_dataset(DictFrameDataset())
+
+    # Invalid cases: out of bounds timestamp >= audio_length
+    class OutOfBoundsFrameDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_labels": {100: 0}},
+            }
+
+    with pytest.raises(InvalidDatasetError, match="exceeds audio length"):
+        task.validate_dataset(OutOfBoundsFrameDataset())
+
+    # Invalid cases: empty sequence
+    class EmptyFrameDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_labels": []},
+            }
+
+    with pytest.raises(InvalidDatasetError, match="must not be empty"):
+        task.validate_dataset(EmptyFrameDataset())
+
+
+def test_frame_classification_variable_length_and_dictionary():
+    task_mean = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(), pooling="mean"
+    )
+    task_max = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(), pooling="max"
+    )
+
+    # Clips with varying target counts: clip 0 has 3 targets, clip 1 has 5 targets, clip 2 has dict
+    train_reps = torch.randn(4, 6, 8)
+    train_meta = [
+        {"frame_labels": [0, 1, 0], "audio_length": 60},  # K=3 (downsample 6 -> 3)
+        {
+            "frame_labels": [1, 0, 1, 0, 1],
+            "audio_length": 60,
+        },  # K=5 (downsample 6 -> 5)
+        {
+            "frame_labels": {0: 0, 30: 1},
+            "audio_length": 60,
+        },  # dict K=2 (downsample 6 -> 2)
+        {"frame_labels": [0] * 12, "audio_length": 60},  # K=12 (upsample 6 -> 12)
+    ]
+    test_reps = torch.randn(2, 6, 8)
+    test_meta = [
+        {"frame_labels": {10: 1, 40: 0}, "audio_length": 60},  # dict K=2
+        {"frame_labels": [1, 1, 0, 0], "audio_length": 60},  # K=4
+    ]
+
+    for task in (task_mean, task_max):
+        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+        assert 0.0 <= res["accuracy"] <= 1.0
+        assert "training_time" in res
+
+    # Verify examine_data computes correct stats on variable length / dict targets
+    info = task_mean.examine_data(train_meta, test_meta)
+    assert info["train_clips"] == 4
+    assert info["test_clips"] == 2
+    # Total train frames: 3 + 5 + 2 + 12 = 22
+    assert info["train_frames"] == 22
+    # Total test frames: 2 + 4 = 6
+    assert info["test_frames"] == 6
+    assert info["total_frames"] == 28
+    assert info["num_classes"] == 2
+
+
+def test_frame_classification_invalid_pooling():
+    with pytest.raises(ValueError, match="Unknown pooling"):
+        FrameClassificationTask(
+            classifier=KNNBenchmarkClassifier(), pooling="unsupported"
+        )
 
 
 def test_benchmark_runner_with_frame_classification(tmp_path):

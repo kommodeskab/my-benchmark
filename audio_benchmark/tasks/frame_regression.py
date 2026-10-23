@@ -12,16 +12,18 @@ from audio_benchmark.dataset import parse_dataset_item, validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.regressors.models import BaseRegressor
 from audio_benchmark.tasks.base import BaseTask
-from audio_benchmark.tasks.downsampling import downsample_sequence
+from audio_benchmark.tasks.downsampling import (
+    align_features_to_targets,
+    parse_frame_targets,
+)
 
 
 class FrameRegressionTask(BaseTask):
     """Frame-level audio regression task.
 
-    Each frame of the input audio has a continuous target in sample metadata.
-    When representation models downsample audio along the temporal dimension
-    from T to T', this task downsamples the frame targets to T' by computing
-    the mean of values in each downsampled region.
+    Evaluates frame-level audio regression by temporally aligning representation
+    features to raw continuous targets via pooling (downsampling) or nearest
+    repetition (upsampling). Raw ground-truth targets are never downsampled or modified.
     """
 
     def __init__(
@@ -30,14 +32,19 @@ class FrameRegressionTask(BaseTask):
         name: str = "frame_regression",
         target_key: str = "frame_targets",
         metric: str = "r2",
+        pooling: str = "mean",
+        audio_length: int | None = None,
     ):
         """Initialize the FrameRegressionTask.
 
         Args:
             regressor: Downstream regressor instance conforming to BaseRegressor.
             name: Identifier for the task.
-            target_key: Metadata key containing the per-frame target sequence (length T).
+            target_key: Metadata key containing per-frame continuous targets (1D sequence or dict).
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
+            pooling: Pooling strategy when representation length T' >= target count K
+                ('mean', 'max', 'min', 'median').
+            audio_length: Optional total audio length in samples.
         """
         super().__init__(name=name)
         valid_metrics = ("r2", "mse", "rmse", "mae", "pearson_r")
@@ -45,8 +52,25 @@ class FrameRegressionTask(BaseTask):
             raise ValueError(
                 f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
             )
+        valid_poolings = ("mean", "max", "min", "median")
+        if pooling not in valid_poolings:
+            raise ValueError(
+                f"Unknown pooling '{pooling}'. Supported pooling methods: {valid_poolings}"
+            )
+        if audio_length is not None and (
+            not isinstance(audio_length, int)
+            or isinstance(audio_length, bool)
+            or audio_length <= 0
+        ):
+            raise ValueError(
+                f"audio_length must be a positive integer, got {audio_length!r}."
+            )
+
         self.metric = metric
         self.target_key = target_key
+        self.pooling = pooling
+        self.audio_length = audio_length
+
         if regressor is None:
             raise TypeError(
                 "regressor must be an instantiated BaseRegressor instance, got None. "
@@ -64,22 +88,24 @@ class FrameRegressionTask(BaseTask):
         self.regressor = regressor
 
     def validate_dataset(self, dataset: Dataset) -> None:
-        """Verify that dataset metadata contains per-frame targets matching audio length T."""
+        """Verify that dataset metadata contains valid per-frame continuous targets."""
         validate_dataset(dataset, required_metadata_keys=[self.target_key])
 
         parsed = parse_dataset_item(dataset[0])
         audio_length = parsed["waveform"].shape[-1]
         targets = parsed["metadata"][self.target_key]
-        if not hasattr(targets, "__len__"):
-            raise InvalidDatasetError(
-                f"Metadata key '{self.target_key}' must be a sequence of length {audio_length}, "
-                f"got {type(targets).__name__}."
-            )
-        if len(targets) != audio_length:
-            raise InvalidDatasetError(
-                f"Length mismatch in '{self.target_key}': audio length is {audio_length} frames, "
-                f"but metadata '{self.target_key}' has {len(targets)} elements."
-            )
+        _, values = parse_frame_targets(
+            targets,
+            audio_length=audio_length,
+            key_name=self.target_key,
+        )
+        for idx, val in enumerate(values):
+            try:
+                float(val)
+            except (ValueError, TypeError) as e:
+                raise InvalidDatasetError(
+                    f"Frame target at index {idx} in '{self.target_key}' cannot be converted to float: {val!r}."
+                ) from e
 
     def evaluate(
         self,
@@ -88,12 +114,15 @@ class FrameRegressionTask(BaseTask):
         test_representations: torch.Tensor,
         test_metadata: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Downsample frame targets to T' and evaluate downstream regressor.
+        """Align representation features to raw frame targets and evaluate regressor.
+
+        Ground-truth targets are never downsampled or modified. Features are aligned
+        to targets via pooling (when T' >= K) or nearest repetition (when T' < K).
 
         Args:
-            train_representations: Tensor of shape (N_train, T', C').
+            train_representations: Tensor of shape (N_train, T', C') or sequence of representations.
             train_metadata: List of metadata dicts corresponding to each train clip.
-            test_representations: Tensor of shape (N_test, T', C').
+            test_representations: Tensor of shape (N_test, T', C') or sequence of representations.
             test_metadata: List of metadata dicts corresponding to each test clip.
 
         Returns:
@@ -112,39 +141,92 @@ class FrameRegressionTask(BaseTask):
         if len(test_representations) == 0:
             raise TaskError("No test representations provided for evaluation.")
 
-        _, target_len_train, feature_dim = train_representations.shape
-        _, target_len_test, _ = test_representations.shape
-
-        downsampled_train: list[np.ndarray] = []
+        train_aligned: list[np.ndarray] = []
+        train_targets_list: list[list[float]] = []
         for idx, meta in enumerate(train_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
                     f"Train sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            downsampled = downsample_sequence(
-                meta[self.target_key], target_len=target_len_train, mode="mean"
+            raw_target = meta[self.target_key]
+            audio_len = meta.get("audio_length") or self.audio_length
+            if isinstance(raw_target, dict) and audio_len is None:
+                raise InvalidDatasetError(
+                    f"Train sample at index {idx} contains dictionary frame targets in '{self.target_key}', "
+                    "which require 'audio_length' in metadata or task.audio_length."
+                )
+            timestamps, raw_targets = parse_frame_targets(
+                raw_target,
+                audio_length=audio_len,
+                key_name=self.target_key,
             )
-            downsampled_train.append(downsampled)
+            clip_reps = train_representations[idx]
+            if isinstance(clip_reps, torch.Tensor):
+                clip_reps = clip_reps.detach().cpu().numpy()
+            eff_audio_len = (
+                float(audio_len) if audio_len is not None else float(len(timestamps))
+            )
+            aligned = align_features_to_targets(
+                representations=clip_reps,
+                target_timestamps=timestamps,
+                audio_length=eff_audio_len,
+                pooling=self.pooling,
+            )
+            train_aligned.append(aligned)
+            try:
+                train_targets_list.append([float(t) for t in raw_targets])
+            except (ValueError, TypeError) as e:
+                raise TaskError(
+                    f"Train sample at index {idx} frame target cannot be converted to float: {e}"
+                ) from e
 
-        downsampled_test: list[np.ndarray] = []
+        test_aligned: list[np.ndarray] = []
+        test_targets_list: list[list[float]] = []
         for idx, meta in enumerate(test_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
                     f"Test sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            downsampled = downsample_sequence(
-                meta[self.target_key], target_len=target_len_test, mode="mean"
+            raw_target = meta[self.target_key]
+            audio_len = meta.get("audio_length") or self.audio_length
+            if isinstance(raw_target, dict) and audio_len is None:
+                raise InvalidDatasetError(
+                    f"Test sample at index {idx} contains dictionary frame targets in '{self.target_key}', "
+                    "which require 'audio_length' in metadata or task.audio_length."
+                )
+            timestamps, raw_targets = parse_frame_targets(
+                raw_target,
+                audio_length=audio_len,
+                key_name=self.target_key,
             )
-            downsampled_test.append(downsampled)
+            clip_reps = test_representations[idx]
+            if isinstance(clip_reps, torch.Tensor):
+                clip_reps = clip_reps.detach().cpu().numpy()
+            eff_audio_len = (
+                float(audio_len) if audio_len is not None else float(len(timestamps))
+            )
+            aligned = align_features_to_targets(
+                representations=clip_reps,
+                target_timestamps=timestamps,
+                audio_length=eff_audio_len,
+                pooling=self.pooling,
+            )
+            test_aligned.append(aligned)
+            try:
+                test_targets_list.append([float(t) for t in raw_targets])
+            except (ValueError, TypeError) as e:
+                raise TaskError(
+                    f"Test sample at index {idx} frame target cannot be converted to float: {e}"
+                ) from e
 
-        targets_train = np.array(downsampled_train, dtype=np.float32)
-        targets_test = np.array(downsampled_test, dtype=np.float32)
+        X_train = np.concatenate(train_aligned, axis=0)
+        X_test = np.concatenate(test_aligned, axis=0)
 
-        X_train = train_representations.detach().cpu().numpy().reshape(-1, feature_dim)
-        y_train = targets_train.reshape(-1)
+        train_flat = [t for sub in train_targets_list for t in sub]
+        test_flat = [t for sub in test_targets_list for t in sub]
 
-        X_test = test_representations.detach().cpu().numpy().reshape(-1, feature_dim)
-        y_test = targets_test.reshape(-1)
+        y_train = np.array(train_flat, dtype=np.float32)
+        y_test = np.array(test_flat, dtype=np.float32)
 
         regressor_inst = self.regressor
         regressor_name = regressor_inst.__class__.__name__
@@ -204,13 +286,18 @@ class FrameRegressionTask(BaseTask):
         if len(train_metadata) == 0:
             raise TaskError("Cannot examine an empty dataset.")
 
-        train_targets = []
+        train_targets: list[float] = []
         for idx, meta in enumerate(train_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            for t in meta[self.target_key]:
+            _, raw_values = parse_frame_targets(
+                meta[self.target_key],
+                audio_length=meta.get("audio_length") or self.audio_length,
+                key_name=self.target_key,
+            )
+            for t in raw_values:
                 try:
                     train_targets.append(float(t))
                 except (ValueError, TypeError) as e:
@@ -218,13 +305,18 @@ class FrameRegressionTask(BaseTask):
                         f"Sample at index {idx} frame target cannot be converted to float: {e}"
                     ) from e
 
-        test_targets = []
+        test_targets: list[float] = []
         for idx, meta in enumerate(test_metadata):
             if self.target_key not in meta:
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            for t in meta[self.target_key]:
+            _, raw_values = parse_frame_targets(
+                meta[self.target_key],
+                audio_length=meta.get("audio_length") or self.audio_length,
+                key_name=self.target_key,
+            )
+            for t in raw_values:
                 try:
                     test_targets.append(float(t))
                 except (ValueError, TypeError) as e:
@@ -240,9 +332,13 @@ class FrameRegressionTask(BaseTask):
             else train_targets_np
         )
 
-        frame_len_sample = (
-            len(train_metadata[0][self.target_key]) if train_metadata else 0
-        )
+        sample_targets = parse_frame_targets(
+            train_metadata[0][self.target_key],
+            audio_length=train_metadata[0].get("audio_length") or self.audio_length,
+            key_name=self.target_key,
+        )[1]
+        frame_len_sample = len(sample_targets) if train_metadata else 0
+
         train_mean = float(np.mean(train_targets_np))
         y_pred_baseline = np.full_like(test_targets_np, train_mean)
 

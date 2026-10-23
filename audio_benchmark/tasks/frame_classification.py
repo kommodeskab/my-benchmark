@@ -14,16 +14,18 @@ from audio_benchmark.classifiers.models import BaseClassifier
 from audio_benchmark.dataset import parse_dataset_item, validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.base import BaseTask
-from audio_benchmark.tasks.downsampling import downsample_sequence
+from audio_benchmark.tasks.downsampling import (
+    align_features_to_targets,
+    parse_frame_targets,
+)
 
 
 class FrameClassificationTask(BaseTask):
     """Frame-level audio classification task.
 
-    Each frame of the input audio has a ground truth label in sample metadata.
-    When representation models downsample audio along the temporal dimension
-    from T to T', this task downsamples the frame labels to T' using the
-    most common label in each downsampled region.
+    Evaluates frame-level audio classification by temporally aligning representation
+    features to raw ground-truth targets via pooling (downsampling) or nearest
+    repetition (upsampling). Raw ground-truth targets are never downsampled or modified.
     """
 
     def __init__(
@@ -32,14 +34,19 @@ class FrameClassificationTask(BaseTask):
         name: str = "frame_classification",
         label_key: str = "frame_labels",
         metric: str = "accuracy",
+        pooling: str = "mean",
+        audio_length: int | None = None,
     ):
         """Initialize the FrameClassificationTask.
 
         Args:
             classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
-            label_key: Metadata key containing the per-frame label sequence (length T).
+            label_key: Metadata key containing per-frame labels (1D sequence or dict).
             metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
+            pooling: Pooling strategy when representation length T' >= target count K
+                ('mean', 'max', 'min', 'median').
+            audio_length: Optional total audio length in samples.
         """
         super().__init__(name=name)
         valid_metrics = ("accuracy", "macro_f1", "micro_f1")
@@ -47,8 +54,25 @@ class FrameClassificationTask(BaseTask):
             raise ValueError(
                 f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
             )
+        valid_poolings = ("mean", "max", "min", "median")
+        if pooling not in valid_poolings:
+            raise ValueError(
+                f"Unknown pooling '{pooling}'. Supported pooling methods: {valid_poolings}"
+            )
+        if audio_length is not None and (
+            not isinstance(audio_length, int)
+            or isinstance(audio_length, bool)
+            or audio_length <= 0
+        ):
+            raise ValueError(
+                f"audio_length must be a positive integer, got {audio_length!r}."
+            )
+
         self.metric = metric
         self.label_key = label_key
+        self.pooling = pooling
+        self.audio_length = audio_length
+
         if classifier is None:
             raise TypeError(
                 "classifier must be an instantiated BaseClassifier instance, got None. "
@@ -66,22 +90,17 @@ class FrameClassificationTask(BaseTask):
         self.classifier = classifier
 
     def validate_dataset(self, dataset: Dataset) -> None:
-        """Verify that dataset metadata contains per-frame labels matching audio length T."""
+        """Verify that dataset metadata contains valid per-frame labels."""
         validate_dataset(dataset, required_metadata_keys=[self.label_key])
 
         parsed = parse_dataset_item(dataset[0])
         audio_length = parsed["waveform"].shape[-1]
         labels = parsed["metadata"][self.label_key]
-        if not hasattr(labels, "__len__"):
-            raise InvalidDatasetError(
-                f"Metadata key '{self.label_key}' must be a sequence of length {audio_length}, "
-                f"got {type(labels).__name__}."
-            )
-        if len(labels) != audio_length:
-            raise InvalidDatasetError(
-                f"Length mismatch in '{self.label_key}': audio length is {audio_length} frames, "
-                f"but metadata '{self.label_key}' has {len(labels)} elements."
-            )
+        parse_frame_targets(
+            labels,
+            audio_length=audio_length,
+            key_name=self.label_key,
+        )
 
     def evaluate(
         self,
@@ -90,12 +109,15 @@ class FrameClassificationTask(BaseTask):
         test_representations: torch.Tensor,
         test_metadata: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Downsample frame labels to T' and evaluate downstream classifier.
+        """Align representation features to raw frame targets and evaluate classifier.
+
+        Ground-truth targets are never downsampled or modified. Features are aligned
+        to targets via pooling (when T' >= K) or nearest repetition (when T' < K).
 
         Args:
-            train_representations: Tensor of shape (N_train, T', C').
+            train_representations: Tensor of shape (N_train, T', C') or sequence of representations.
             train_metadata: List of metadata dicts corresponding to each train clip.
-            test_representations: Tensor of shape (N_test, T', C').
+            test_representations: Tensor of shape (N_test, T', C') or sequence of representations.
             test_metadata: List of metadata dicts corresponding to each test clip.
 
         Returns:
@@ -114,34 +136,80 @@ class FrameClassificationTask(BaseTask):
         if len(test_representations) == 0:
             raise TaskError("No test representations provided for evaluation.")
 
-        _, target_len_train, feature_dim = train_representations.shape
-        _, target_len_test, _ = test_representations.shape
-
-        train_labels_per_clip = []
+        train_aligned: list[np.ndarray] = []
+        train_labels_list: list[list[Any]] = []
         for idx, meta in enumerate(train_metadata):
             if self.label_key not in meta:
                 raise InvalidDatasetError(
                     f"Train sample at index {idx} metadata does not contain '{self.label_key}'."
                 )
-            downsampled = downsample_sequence(
-                meta[self.label_key], target_len=target_len_train, mode="mode"
+            raw_target = meta[self.label_key]
+            audio_len = meta.get("audio_length") or self.audio_length
+            if isinstance(raw_target, dict) and audio_len is None:
+                raise InvalidDatasetError(
+                    f"Train sample at index {idx} contains dictionary frame targets in '{self.label_key}', "
+                    "which require 'audio_length' in metadata or task.audio_length."
+                )
+            timestamps, raw_labels = parse_frame_targets(
+                raw_target,
+                audio_length=audio_len,
+                key_name=self.label_key,
             )
-            train_labels_per_clip.append(downsampled)
+            clip_reps = train_representations[idx]
+            if isinstance(clip_reps, torch.Tensor):
+                clip_reps = clip_reps.detach().cpu().numpy()
+            eff_audio_len = (
+                float(audio_len) if audio_len is not None else float(len(timestamps))
+            )
+            aligned = align_features_to_targets(
+                representations=clip_reps,
+                target_timestamps=timestamps,
+                audio_length=eff_audio_len,
+                pooling=self.pooling,
+            )
+            train_aligned.append(aligned)
+            train_labels_list.append(raw_labels)
 
-        test_labels_per_clip = []
+        test_aligned: list[np.ndarray] = []
+        test_labels_list: list[list[Any]] = []
         for idx, meta in enumerate(test_metadata):
             if self.label_key not in meta:
                 raise InvalidDatasetError(
                     f"Test sample at index {idx} metadata does not contain '{self.label_key}'."
                 )
-            downsampled = downsample_sequence(
-                meta[self.label_key], target_len=target_len_test, mode="mode"
+            raw_target = meta[self.label_key]
+            audio_len = meta.get("audio_length") or self.audio_length
+            if isinstance(raw_target, dict) and audio_len is None:
+                raise InvalidDatasetError(
+                    f"Test sample at index {idx} contains dictionary frame targets in '{self.label_key}', "
+                    "which require 'audio_length' in metadata or task.audio_length."
+                )
+            timestamps, raw_labels = parse_frame_targets(
+                raw_target,
+                audio_length=audio_len,
+                key_name=self.label_key,
             )
-            test_labels_per_clip.append(downsampled)
+            clip_reps = test_representations[idx]
+            if isinstance(clip_reps, torch.Tensor):
+                clip_reps = clip_reps.detach().cpu().numpy()
+            eff_audio_len = (
+                float(audio_len) if audio_len is not None else float(len(timestamps))
+            )
+            aligned = align_features_to_targets(
+                representations=clip_reps,
+                target_timestamps=timestamps,
+                audio_length=eff_audio_len,
+                pooling=self.pooling,
+            )
+            test_aligned.append(aligned)
+            test_labels_list.append(raw_labels)
 
-        train_flat = np.concatenate(train_labels_per_clip)
-        test_flat = np.concatenate(test_labels_per_clip)
-        all_labels = np.concatenate([train_flat, test_flat])
+        X_train = np.concatenate(train_aligned, axis=0)
+        X_test = np.concatenate(test_aligned, axis=0)
+
+        train_flat = [lbl for sub in train_labels_list for lbl in sub]
+        test_flat = [lbl for sub in test_labels_list for lbl in sub]
+        all_labels = train_flat + test_flat
 
         encoder = LabelEncoder()
         encoder.fit(all_labels)
@@ -152,11 +220,8 @@ class FrameClassificationTask(BaseTask):
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        y_train = encoder.transform(train_flat)
-        y_test = encoder.transform(test_flat)
-
-        X_train = train_representations.detach().cpu().numpy().reshape(-1, feature_dim)
-        X_test = test_representations.detach().cpu().numpy().reshape(-1, feature_dim)
+        y_train = encoder.transform(train_flat).astype(np.int64)
+        y_test = encoder.transform(test_flat).astype(np.int64)
 
         classifier_inst = self.classifier
         classifier_name = classifier_inst.__class__.__name__
@@ -192,7 +257,7 @@ class FrameClassificationTask(BaseTask):
         """Examine the dataset in the context of frame classification.
 
         Validates the datasets, computes clip/frame distributions, class counts,
-        and evaluates a trivial baseline (majority frame class) on test frames.
+        and evaluates a trivial baseline (majority frame class) on raw test targets.
 
         Args:
             dataset: Audio dataset to examine for training.
@@ -213,8 +278,24 @@ class FrameClassificationTask(BaseTask):
         if len(train_metadata) == 0:
             raise TaskError("Cannot examine an empty dataset.")
 
-        train_labels = [label for m in train_metadata for label in m[self.label_key]]
-        test_labels = [label for m in test_metadata for label in m[self.label_key]]
+        train_labels: list[Any] = []
+        for meta in train_metadata:
+            _, targets = parse_frame_targets(
+                meta[self.label_key],
+                audio_length=meta.get("audio_length") or self.audio_length,
+                key_name=self.label_key,
+            )
+            train_labels.extend(targets)
+
+        test_labels: list[Any] = []
+        for meta in test_metadata:
+            _, targets = parse_frame_targets(
+                meta[self.label_key],
+                audio_length=meta.get("audio_length") or self.audio_length,
+                key_name=self.label_key,
+            )
+            test_labels.extend(targets)
+
         all_labels = train_labels + (test_labels if testset is not None else [])
 
         encoder = LabelEncoder()
@@ -227,9 +308,13 @@ class FrameClassificationTask(BaseTask):
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        frame_len_sample = (
-            len(train_metadata[0][self.label_key]) if train_metadata else 0
-        )
+        sample_targets = parse_frame_targets(
+            train_metadata[0][self.label_key],
+            audio_length=train_metadata[0].get("audio_length") or self.audio_length,
+            key_name=self.label_key,
+        )[1]
+        frame_len_sample = len(sample_targets) if train_metadata else 0
+
         class_counts = {
             str(c): int(count) for c, count in Counter(train_labels).items()
         }

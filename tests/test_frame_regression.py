@@ -73,10 +73,94 @@ def test_frame_regression_dataset_validation():
     task = FrameRegressionTask(
         regressor=LinearBenchmarkRegressor(), target_key="frame_targets"
     )
-    bad_ds = MismatchedFrameRegDataset()
+    # Arbitrary length 1D sequence (40 elements for 100 audio samples) is now accepted
+    valid_seq_ds = MismatchedFrameRegDataset()
+    task.validate_dataset(valid_seq_ds)
 
-    with pytest.raises(InvalidDatasetError, match="Length mismatch in 'frame_targets'"):
-        task.validate_dataset(bad_ds)
+    # Valid dictionary targets dataset
+    class DictFrameRegDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_targets": {0: 1.5, 50: 3.2}},
+            }
+
+    task.validate_dataset(DictFrameRegDataset())
+
+    # Invalid case: out-of-bounds timestamp
+    class OutOfBoundsFrameRegDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_targets": {100: 1.0}},
+            }
+
+    with pytest.raises(InvalidDatasetError, match="exceeds audio length"):
+        task.validate_dataset(OutOfBoundsFrameRegDataset())
+
+    # Invalid case: empty sequence
+    class EmptyFrameRegDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_targets": []},
+            }
+
+    with pytest.raises(InvalidDatasetError, match="must not be empty"):
+        task.validate_dataset(EmptyFrameRegDataset())
+
+
+def test_frame_regression_variable_length_and_dictionary():
+    task_mean = FrameRegressionTask(
+        regressor=LinearBenchmarkRegressor(), pooling="mean"
+    )
+    task_max = FrameRegressionTask(regressor=LinearBenchmarkRegressor(), pooling="max")
+
+    train_reps = torch.randn(4, 6, 8)
+    train_meta = [
+        {"frame_targets": [1.0, 2.0, 3.0], "audio_length": 60},  # K=3
+        {"frame_targets": [0.5, 1.5, 2.5, 3.5, 4.5], "audio_length": 60},  # K=5
+        {"frame_targets": {0: 1.2, 30: 2.4}, "audio_length": 60},  # dict K=2
+        {
+            "frame_targets": [float(i * 0.1) for i in range(12)],
+            "audio_length": 60,
+        },  # K=12
+    ]
+    test_reps = torch.randn(2, 6, 8)
+    test_meta = [
+        {"frame_targets": {10: 0.8, 40: 1.6}, "audio_length": 60},  # dict K=2
+        {"frame_targets": [0.1, 0.2, 0.3, 0.4], "audio_length": 60},  # K=4
+    ]
+
+    for task in (task_mean, task_max):
+        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+        assert "mse" in res
+        assert "r2" in res
+        assert "training_time" in res
+
+    info = task_mean.examine_data(train_meta, test_meta)
+    assert info["train_clips"] == 4
+    assert info["test_clips"] == 2
+    assert info["train_frames"] == 22
+    assert info["test_frames"] == 6
+    assert info["total_frames"] == 28
+
+
+def test_frame_regression_invalid_pooling():
+    with pytest.raises(ValueError, match="Unknown pooling"):
+        FrameRegressionTask(regressor=LinearBenchmarkRegressor(), pooling="unsupported")
 
 
 def test_benchmark_runner_with_frame_regression(tmp_path):

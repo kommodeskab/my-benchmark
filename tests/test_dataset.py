@@ -277,8 +277,9 @@ def test_base_dataset_resample_only():
     item = wrapped[0]
     assert item["waveform"].shape == (1, 8000)
     assert item["sample_rate"] == 8000
-    assert len(item["metadata"]["frame_targets"]) == 8000
-    assert len(item["metadata"]["frame_labels"]) == 8000
+    # Uniform sequence targets remain unchanged per R4
+    assert len(item["metadata"]["frame_targets"]) == 16000
+    assert len(item["metadata"]["frame_labels"]) == 16000
     # tokens, label, and target should not be cropped or modified
     assert item["metadata"]["tokens"] == ["word_a", "word_b", "word_c"]
     assert item["metadata"]["label"] == 0
@@ -327,9 +328,48 @@ def test_base_dataset_resample_and_crop():
     item = wrapped[0]
     assert item["waveform"].shape == (1, 4000)
     assert item["sample_rate"] == 8000
-    assert len(item["metadata"]["frame_targets"]) == 4000
-    assert len(item["metadata"]["frame_labels"]) == 4000
+    # Resample leaves uniform sequence at 24000; cropping from 12000 to 4000 retains 1/3 (8000)
+    assert len(item["metadata"]["frame_targets"]) == 8000
+    assert len(item["metadata"]["frame_labels"]) == 8000
     assert item["metadata"]["tokens"] == ["word_a", "word_b", "word_c"]
+
+
+def test_base_dataset_dictionary_targets_resample_crop_pad():
+    class DictTargetDataset(Dataset):
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 16000),
+                "sample_rate": 16000,
+                "metadata": {
+                    "frame_targets": {0: 1.0, 8000: 2.0, 12000: 3.0},
+                    "frame_labels": {"0": 0, "8000": 1, "12000": 2},
+                },
+            }
+
+    ds = DictTargetDataset()
+    # Resample from 16000 to 8000: timestamps scaled by 0.5
+    resampled = BaseDataset(ds, dataset_name="dict_ds", sample_rate=8000, length=None)
+    item = resampled[0]
+    assert item["waveform"].shape == (1, 8000)
+    assert item["metadata"]["frame_targets"] == {0: 1.0, 4000: 2.0, 6000: 3.0}
+    assert item["metadata"]["frame_labels"] == {"0": 0, "4000": 1, "6000": 2}
+
+    # Crop to length 5000: timestamps >= 5000 are dropped
+    cropped = BaseDataset(ds, dataset_name="dict_ds", sample_rate=8000, length=5000)
+    item_cropped = cropped[0]
+    assert item_cropped["waveform"].shape == (1, 5000)
+    assert item_cropped["metadata"]["frame_targets"] == {0: 1.0, 4000: 2.0}
+    assert item_cropped["metadata"]["frame_labels"] == {"0": 0, "4000": 1}
+
+    # Pad to length 10000: all timestamps remain
+    padded = BaseDataset(ds, dataset_name="dict_ds", sample_rate=8000, length=10000)
+    item_padded = padded[0]
+    assert item_padded["waveform"].shape == (1, 10000)
+    assert item_padded["metadata"]["frame_targets"] == {0: 1.0, 4000: 2.0, 6000: 3.0}
+    assert item_padded["metadata"]["frame_labels"] == {"0": 0, "4000": 1, "6000": 2}
 
 
 def test_base_dataset_tensor_metadata():
