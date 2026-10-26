@@ -11,7 +11,18 @@ from torch.utils.data import Dataset
 from audio_benchmark.exceptions import InvalidDatasetError
 
 ALLOWED_METADATA_KEYS = frozenset(
-    {"label", "target", "frame_labels", "frame_targets", "tokens"}
+    {
+        "label",
+        "target",
+        "frame_labels",
+        "frame_targets",
+        "tokens",
+        "speech_duration",
+        "gender",
+        "age",
+        "phonemes",
+        "text",
+    }
 )
 
 
@@ -186,6 +197,7 @@ class BaseDataset(Dataset):
         dataset_name: str,
         sample_rate: int,
         length: int | None = None,
+        target_key: str | None = None,
     ) -> None:
         """Initialize the BaseDataset wrapper.
 
@@ -194,6 +206,7 @@ class BaseDataset(Dataset):
             dataset_name: Explicit identifier name for the dataset.
             sample_rate: Target audio sampling rate in Hz.
             length: Target audio length in samples (None for no padding/cropping).
+            target_key: Optional explicit target or label metadata key to consider valid.
 
         Raises:
             ValueError: If dataset_name is not a non-empty string, or sample_rate/length are not positive integers.
@@ -226,6 +239,7 @@ class BaseDataset(Dataset):
         self.name = self.dataset_name
         self.sample_rate = sample_rate
         self.length = length
+        self.target_key = target_key
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset.
@@ -270,10 +284,15 @@ class BaseDataset(Dataset):
         orig_sr = parsed["sample_rate"]
         metadata = dict(parsed["metadata"])
 
-        if not any(k in ALLOWED_METADATA_KEYS for k in metadata):
+        allowed = (
+            ALLOWED_METADATA_KEYS | {self.target_key}
+            if self.target_key is not None
+            else ALLOWED_METADATA_KEYS
+        )
+        if not any(k in allowed for k in metadata):
             raise InvalidDatasetError(
                 "Metadata must contain at least one of 'label', 'target', "
-                "'frame_labels', 'frame_targets', or 'tokens'."
+                "'frame_labels', 'frame_targets', 'tokens', or 'speech_duration'."
             )
 
         if orig_sr != self.sample_rate:

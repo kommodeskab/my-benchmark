@@ -134,3 +134,41 @@ def test_extract_representations_progress_bar(monkeypatch):
     )
     assert len(calls) == 2
     assert calls[1][1].get("disable") is True
+
+
+def test_extract_representations_variable_length_batches_expands_memmap(tmp_path):
+    """Verify memmap grows when a later batch has longer audio than the first batch."""
+
+    class _VarLenDataset(torch.utils.data.Dataset):
+        def __init__(self):
+            self.lengths = [160, 240, 480, 640]
+
+        def __len__(self):
+            return len(self.lengths)
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, self.lengths[idx]),
+                "sample_rate": 16000,
+                "metadata": {"tokens": ["a", "b"]},
+            }
+
+    dataset = _VarLenDataset()
+    model = DummyAudioModel(representation_dim=16)
+    mmap_file = tmp_path / "var_len_reps.npy"
+
+    reps, metadata = extract_representations(
+        model=model,
+        dataset=dataset,
+        batch_size=2,
+        device="cpu",
+        mmap_path=mmap_file,
+        show_progress=False,
+    )
+
+    expected_max_t = model(torch.randn(1, 1, 640)).shape[1]
+    assert reps.shape == (4, expected_max_t, 16)
+    assert all("rep_length" in m for m in metadata)
+    assert metadata[0]["rep_length"] < metadata[1]["rep_length"]
+    assert metadata[2]["rep_length"] < metadata[3]["rep_length"]
+    assert metadata[3]["rep_length"] == expected_max_t

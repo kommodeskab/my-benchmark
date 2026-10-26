@@ -137,8 +137,29 @@ class SequenceModelingTask(BaseTask):
 
         encoded_train_targets = [vocab.encode(seq) for seq in raw_train_targets]
 
-        train_reps = train_representations.to(torch.float32)
-        test_reps = test_representations.to(torch.float32)
+        train_lengths = [
+            int(meta.get("rep_length", train_representations.shape[1]))
+            for meta in train_metadata
+        ]
+        if any(length < train_representations.shape[1] for length in train_lengths):
+            train_reps: torch.Tensor | list[torch.Tensor] = [
+                train_representations[i, :length].to(torch.float32)
+                for i, length in enumerate(train_lengths)
+            ]
+        else:
+            train_reps = train_representations.to(torch.float32)
+
+        test_lengths = [
+            int(meta.get("rep_length", test_representations.shape[1]))
+            for meta in test_metadata
+        ]
+        if any(length < test_representations.shape[1] for length in test_lengths):
+            test_reps: torch.Tensor | list[torch.Tensor] = [
+                test_representations[i, :length].to(torch.float32)
+                for i, length in enumerate(test_lengths)
+            ]
+        else:
+            test_reps = test_representations.to(torch.float32)
 
         start_time = time.perf_counter()
         self.probe.fit(train_reps, encoded_train_targets, vocab_size=vocab_size)

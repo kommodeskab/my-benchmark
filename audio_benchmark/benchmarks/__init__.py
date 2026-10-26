@@ -1,0 +1,27 @@
+"""Pre-defined audio benchmarks package."""
+
+from audio_benchmark.benchmarks.cremad import CREMADClassificationBenchmark
+from audio_benchmark.benchmarks.speech_commands import (
+    SpeechCommandsClassificationBenchmark,
+)
+from audio_benchmark.benchmarks.timit import (
+    TIMITSpeechDurationRegressionBenchmark,
+)
+from audio_benchmark.benchmarks.timit_phonemes import (
+    TIMITPhonemeSequenceModelingBenchmark,
+)
+from audio_benchmark.benchmarks.timit_text import (
+    TIMITTextSequenceModelingBenchmark,
+)
+from audio_benchmark.benchmarks.vctk import VCTKGenderClassificationBenchmark
+from audio_benchmark.benchmarks.vctk_age import VCTKAgeRegressionBenchmark
+
+__all__ = [
+    "CREMADClassificationBenchmark",
+    "SpeechCommandsClassificationBenchmark",
+    "TIMITPhonemeSequenceModelingBenchmark",
+    "TIMITSpeechDurationRegressionBenchmark",
+    "TIMITTextSequenceModelingBenchmark",
+    "VCTKAgeRegressionBenchmark",
+    "VCTKGenderClassificationBenchmark",
+]

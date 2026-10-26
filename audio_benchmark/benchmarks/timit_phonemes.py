@@ -1,0 +1,81 @@
+"""Pre-defined TIMIT phoneme sequence modeling benchmark."""
+
+from pathlib import Path
+
+from torch.utils.data import Subset
+
+from audio_benchmark.benchmark import AudioBenchmark
+from audio_benchmark.dataset import BaseDataset
+from audio_benchmark.datasets.timit import TIMITDataset
+from audio_benchmark.tasks.sequence_modeling import SequenceModelingTask
+from audio_benchmark.tasks.sequence_models import TransformerDecoderProbe
+
+
+class TIMITPhonemeSequenceModelingBenchmark(AudioBenchmark):
+    """Pre-defined TIMIT phoneme sequence modeling benchmark.
+
+    Evaluates audio representation models on predicting variable-length phoneme
+    sequences using an autoregressive Transformer decoder probe on the TIMIT
+    training and test splits. Audio samples are resampled to 16 kHz without
+    fixed-length trimming via BaseDataset.
+
+    Args:
+        max_size: Optional maximum number of samples to evaluate on for each split.
+        data_dir: Directory where TIMIT data is cached.
+        cache_dir: Directory path for caching representations. Defaults to ".benchmark_cache".
+        enable_cache: Whether to cache extracted representations. Defaults to True.
+
+    Raises:
+        ValueError: If max_size is non-positive.
+    """
+
+    def __init__(
+        self,
+        max_size: int | None = None,
+        data_dir: str | Path | None = None,
+        cache_dir: str | Path = ".benchmark_cache",
+        enable_cache: bool = True,
+    ) -> None:
+        """Initialize TIMITPhonemeSequenceModelingBenchmark."""
+        if max_size is not None and (
+            not isinstance(max_size, int) or isinstance(max_size, bool) or max_size <= 0
+        ):
+            raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
+
+        task = SequenceModelingTask(
+            probe=TransformerDecoderProbe(),
+            target_key="phonemes",
+        )
+        train_ds = TIMITDataset(
+            split="train",
+            data_dir=data_dir,
+        )
+        test_ds = TIMITDataset(
+            split="test",
+            data_dir=data_dir,
+        )
+
+        if max_size is not None:
+            train_ds = Subset(train_ds, range(min(len(train_ds), max_size)))
+            test_ds = Subset(test_ds, range(min(len(test_ds), max_size)))
+
+        wrapped_train_ds = BaseDataset(
+            dataset=train_ds,
+            dataset_name="TIMIT train (phonemes)",
+            sample_rate=16000,
+        )
+        wrapped_test_ds = BaseDataset(
+            dataset=test_ds,
+            dataset_name="TIMIT test (phonemes)",
+            sample_rate=16000,
+        )
+
+        super().__init__(
+            dataset=wrapped_train_ds,
+            testset=wrapped_test_ds,
+            task=task,
+            dataset_name="TIMIT train (phonemes)",
+            testset_name="TIMIT test (phonemes)",
+            cache_dir=cache_dir,
+            enable_cache=enable_cache,
+        )

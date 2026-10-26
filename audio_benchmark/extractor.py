@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tempfile
 import weakref
 from pathlib import Path
@@ -135,7 +136,20 @@ def extract_representations(
                 current_t = output.shape[1]
                 current_c = output.shape[2]
 
-                # Initialize memory-mapped file on first batch
+                max_audio_len = audio_batch.shape[-1]
+                for meta in meta_batch:
+                    audio_len = meta.get("audio_length", max_audio_len)
+                    if max_audio_len > 0 and audio_len < max_audio_len:
+                        meta["rep_length"] = max(
+                            1,
+                            min(
+                                current_t,
+                                math.ceil(audio_len / max_audio_len * current_t),
+                            ),
+                        )
+                    else:
+                        meta["rep_length"] = current_t
+
                 if mm is None:
                     t_prime = current_t
                     c_prime = current_c
@@ -145,24 +159,42 @@ def extract_representations(
                         dtype=np.float32,
                         shape=(total_samples, t_prime, c_prime),
                     )
+                elif current_t > t_prime:
+                    mm.flush()
+                    resized_path = target_mmap_path.with_name(
+                        f"{target_mmap_path.name}.resize"
+                    )
+                    new_mm = np.lib.format.open_memmap(
+                        resized_path,
+                        mode="w+",
+                        dtype=np.float32,
+                        shape=(total_samples, current_t, c_prime),
+                    )
+                    new_mm[:] = 0.0
+                    if cursor > 0:
+                        new_mm[:cursor, :t_prime, :] = mm[:cursor]
+                    new_mm.flush()
+                    del mm
+                    del new_mm
+                    resized_path.replace(target_mmap_path)
+                    t_prime = current_t
+                    mm = np.lib.format.open_memmap(
+                        target_mmap_path,
+                        mode="r+",
+                        dtype=np.float32,
+                        shape=(total_samples, t_prime, c_prime),
+                    )
 
                 out_np = output.detach().cpu().numpy().astype(np.float32)
 
-                # Write batch directly to disk
                 if current_t == t_prime and current_c == c_prime:
                     mm[cursor : cursor + batch_size_actual] = out_np
                 else:
-                    # Handle possible variable-length temporal padding
-                    if current_t < t_prime:
-                        padded_np = np.zeros(
-                            (batch_size_actual, t_prime, c_prime), dtype=np.float32
-                        )
-                        padded_np[:, :current_t, :] = out_np[:, :, :c_prime]
-                        mm[cursor : cursor + batch_size_actual] = padded_np
-                    else:
-                        mm[cursor : cursor + batch_size_actual] = out_np[
-                            :, :t_prime, :c_prime
-                        ]
+                    padded_np = np.zeros(
+                        (batch_size_actual, t_prime, c_prime), dtype=np.float32
+                    )
+                    padded_np[:, :current_t, :] = out_np[:, :, :c_prime]
+                    mm[cursor : cursor + batch_size_actual] = padded_np
 
                 cursor += batch_size_actual
                 metadata_list.extend(meta_batch)

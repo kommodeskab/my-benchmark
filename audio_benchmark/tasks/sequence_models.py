@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 import torch
 from torch import nn
@@ -13,20 +14,63 @@ from tqdm import tqdm
 from audio_benchmark.utils import PositionalEncoding, resolve_device
 
 
+def _normalize_representations(
+    X: torch.Tensor | Sequence[torch.Tensor],
+) -> list[torch.Tensor]:
+    """Convert a 3D representation tensor or sequence of 2D tensors to a list of float32 2D tensors."""
+    if isinstance(X, torch.Tensor):
+        return [X[i].to(torch.float32) for i in range(X.shape[0])]
+    return [x.to(torch.float32) for x in X]
+
+
+def _pad_representation_batch(
+    reps: Sequence[torch.Tensor],
+) -> tuple[torch.Tensor, list[int], torch.Tensor]:
+    """Zero-pad variable-length 2D representation tensors in a batch to the longest sequence.
+
+    Args:
+        reps: Sequence of 2D tensors of shape (T'_i, C').
+
+    Returns:
+        tuple[torch.Tensor, list[int], torch.Tensor]:
+            - padded_reps: Tensor of shape (B, max_T', C').
+            - lengths: List of unpadded sequence lengths T'_i.
+            - memory_key_padding_mask: Boolean tensor of shape (B, max_T') where True indicates padded positions.
+    """
+    lengths = [int(r.shape[0]) for r in reps]
+    max_len = max(lengths) if lengths else 0
+    batch_size = len(reps)
+
+    padded_reps = [
+        torch.nn.functional.pad(r, (0, 0, 0, max_len - r.shape[0]))
+        if r.shape[0] < max_len
+        else r
+        for r in reps
+    ]
+    stacked = torch.stack(padded_reps, dim=0)
+
+    memory_key_padding_mask = torch.zeros((batch_size, max_len), dtype=torch.bool)
+    for i, length in enumerate(lengths):
+        if length < max_len:
+            memory_key_padding_mask[i, length:] = True
+
+    return stacked, lengths, memory_key_padding_mask
+
+
 class BaseSequenceProbe(ABC):
     """Abstract base class for downstream sequence probes."""
 
     @abstractmethod
     def fit(
         self,
-        X: torch.Tensor,
+        X: torch.Tensor | Sequence[torch.Tensor],
         targets: list[list[int]],
         vocab_size: int,
     ) -> BaseSequenceProbe:
         """Fit the probe on representation features X and integer token targets.
 
         Args:
-            X: Input representations of shape (N, T', C').
+            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
             targets: List of integer target sequences.
             vocab_size: Number of unique vocabulary tokens.
 
@@ -35,11 +79,11 @@ class BaseSequenceProbe(ABC):
         """
 
     @abstractmethod
-    def predict(self, X: torch.Tensor) -> list[list[int]]:
+    def predict(self, X: torch.Tensor | Sequence[torch.Tensor]) -> list[list[int]]:
         """Predict token ID sequences from representation features X.
 
         Args:
-            X: Input representations of shape (N, T', C').
+            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
 
         Returns:
             list[list[int]]: Decoded token ID sequences per sample.
@@ -61,17 +105,20 @@ class _TorchCTCProbe(nn.Module):
         log_probs = nn.functional.log_softmax(logits, dim=-1)
         return log_probs.transpose(0, 1)
 
-    def greedy_decode(self, x: torch.Tensor) -> list[list[int]]:
+    def greedy_decode(
+        self, x: torch.Tensor, lengths: Sequence[int] | None = None
+    ) -> list[list[int]]:
         self.eval()
         with torch.inference_mode():
             logits = self.linear(x)
             preds = logits.argmax(dim=-1).cpu().numpy()
 
         decoded_batch: list[list[int]] = []
-        for seq in preds:
+        for i, seq in enumerate(preds):
+            valid_seq = seq[: lengths[i]] if lengths is not None else seq
             collapsed: list[int] = []
             prev_token = None
-            for tok in seq:
+            for tok in valid_seq:
                 if tok != prev_token:
                     if tok != self.blank_id:
                         collapsed.append(int(tok - 1))
@@ -83,7 +130,9 @@ class _TorchCTCProbe(nn.Module):
 class _PairDataset(Dataset):
     """Dataset pairing representations with target token sequences."""
 
-    def __init__(self, representations: torch.Tensor, targets: list[list[int]]):
+    def __init__(
+        self, representations: Sequence[torch.Tensor], targets: list[list[int]]
+    ):
         self.representations = representations
         self.targets = targets
 
@@ -92,6 +141,15 @@ class _PairDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, list[int]]:
         return self.representations[idx], self.targets[idx]
+
+
+def _collate_ctc_batch(
+    batch: list[tuple[torch.Tensor, list[int]]],
+) -> tuple[torch.Tensor, list[int], list[list[int]]]:
+    """Collate batch for CTC training with dynamic representation zero-padding."""
+    reps, lengths, _ = _pad_representation_batch([x[0] for x in batch])
+    targets = [x[1] for x in batch]
+    return reps, lengths, targets
 
 
 class CTCSequenceProbe(BaseSequenceProbe):
@@ -123,31 +181,32 @@ class CTCSequenceProbe(BaseSequenceProbe):
 
     def fit(
         self,
-        X: torch.Tensor,
+        X: torch.Tensor | Sequence[torch.Tensor],
         targets: list[list[int]],
         vocab_size: int,
     ) -> CTCSequenceProbe:
         """Fit the CTC probe on features X and token targets.
 
         Args:
-            X: Input representations of shape (N, T', C').
+            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
             targets: List of integer target sequences.
             vocab_size: Number of distinct vocabulary tokens.
 
         Returns:
             CTCSequenceProbe: Fitted probe instance.
         """
-        in_dim = X.shape[-1]
+        rep_list = _normalize_representations(X)
+        in_dim = rep_list[0].shape[-1]
         self.model = _TorchCTCProbe(in_dim=in_dim, vocab_size=vocab_size).to(
             self.device
         )
 
-        dataset = _PairDataset(X.to(torch.float32), targets)
+        dataset = _PairDataset(rep_list, targets)
         loader = DataLoader(
             dataset,
             batch_size=max(1, min(self.batch_size, len(dataset))),
             shuffle=True,
-            collate_fn=lambda b: (torch.stack([x[0] for x in b]), [x[1] for x in b]),
+            collate_fn=_collate_ctc_batch,
         )
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -162,18 +221,15 @@ class CTCSequenceProbe(BaseSequenceProbe):
         )
         for _ in pbar:
             total_loss = 0.0
-            for batch_reps, batch_targets in loader:
+            for batch_reps, rep_lengths, batch_targets in loader:
                 batch_reps = batch_reps.to(self.device)
-                b_size = batch_reps.size(0)
 
                 shifted_targets = [[tok + 1 for tok in seq] for seq in batch_targets]
                 flat_targets = torch.tensor(
                     [tok for seq in shifted_targets for tok in seq],
                     dtype=torch.long,
                 )
-                input_lengths = torch.full(
-                    (b_size,), batch_reps.size(1), dtype=torch.long
-                )
+                input_lengths = torch.tensor(rep_lengths, dtype=torch.long)
                 target_lengths = torch.tensor(
                     [len(seq) for seq in shifted_targets], dtype=torch.long
                 )
@@ -188,18 +244,29 @@ class CTCSequenceProbe(BaseSequenceProbe):
 
         return self
 
-    def predict(self, X: torch.Tensor) -> list[list[int]]:
+    def predict(self, X: torch.Tensor | Sequence[torch.Tensor]) -> list[list[int]]:
         """Predict token ID sequences from representations X.
 
         Args:
-            X: Input representations of shape (N, T', C').
+            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
 
         Returns:
             list[list[int]]: Decoded token sequences.
         """
         if self.model is None:
             raise RuntimeError("CTCSequenceProbe has not been fitted yet.")
-        return self.model.greedy_decode(X.to(torch.float32).to(self.device))
+        rep_list = _normalize_representations(X)
+        if not rep_list:
+            return []
+        results: list[list[int]] = []
+        step = max(1, self.batch_size)
+        for start in range(0, len(rep_list), step):
+            batch_slice = rep_list[start : start + step]
+            padded_reps, lengths, _ = _pad_representation_batch(batch_slice)
+            results.extend(
+                self.model.greedy_decode(padded_reps.to(self.device), lengths=lengths)
+            )
+        return results
 
 
 class _TorchTransformerDecoder(nn.Module):
@@ -251,6 +318,7 @@ class _TorchTransformerDecoder(nn.Module):
         tgt: torch.Tensor,
         tgt_mask: torch.Tensor | None = None,
         tgt_key_padding_mask: torch.Tensor | None = None,
+        memory_key_padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         proj_memory = self.memory_proj(memory)
         tgt_embed = self.token_embedding(tgt) * math.sqrt(self.d_model)
@@ -261,10 +329,16 @@ class _TorchTransformerDecoder(nn.Module):
             memory=proj_memory,
             tgt_mask=tgt_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
+            memory_key_padding_mask=memory_key_padding_mask,
         )
         return self.output_proj(out)
 
-    def generate(self, memory: torch.Tensor, max_len: int = 50) -> list[list[int]]:
+    def generate(
+        self,
+        memory: torch.Tensor,
+        max_len: int = 50,
+        memory_key_padding_mask: torch.Tensor | None = None,
+    ) -> list[list[int]]:
         self.eval()
         device = memory.device
         batch_size = memory.size(0)
@@ -284,7 +358,12 @@ class _TorchTransformerDecoder(nn.Module):
                 tgt_embed = self.token_embedding(generated) * math.sqrt(self.d_model)
                 tgt_embed = self.pos_encoder(tgt_embed)
 
-                out = self.decoder(tgt=tgt_embed, memory=proj_memory, tgt_mask=tgt_mask)
+                out = self.decoder(
+                    tgt=tgt_embed,
+                    memory=proj_memory,
+                    tgt_mask=tgt_mask,
+                    memory_key_padding_mask=memory_key_padding_mask,
+                )
                 next_logits = self.output_proj(out[:, -1, :])
                 next_tokens = next_logits.argmax(dim=-1)
 
@@ -316,9 +395,11 @@ def _collate_transformer_batch(
     eos_id: int,
     pad_id: int,
     num_special: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Collate batch with teacher-forcing inputs, targets, and padding masks."""
-    reps = torch.stack([item[0] for item in batch], dim=0)
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Collate batch with padded representations, teacher-forcing inputs, targets, and padding masks."""
+    reps, _, memory_padding_mask = _pad_representation_batch(
+        [item[0] for item in batch]
+    )
     targets = [item[1] for item in batch]
 
     max_len = max(len(t) for t in targets) if targets else 0
@@ -340,7 +421,7 @@ def _collate_transformer_batch(
         dec_target[i, seq_len] = eos_id
         padding_mask[i, seq_len + 1 :] = True
 
-    return reps, dec_input, dec_target, padding_mask
+    return reps, dec_input, dec_target, padding_mask, memory_padding_mask
 
 
 class TransformerDecoderProbe(BaseSequenceProbe):
@@ -388,21 +469,22 @@ class TransformerDecoderProbe(BaseSequenceProbe):
 
     def fit(
         self,
-        X: torch.Tensor,
+        X: torch.Tensor | Sequence[torch.Tensor],
         targets: list[list[int]],
         vocab_size: int,
     ) -> TransformerDecoderProbe:
         """Fit the Transformer Decoder probe on features X and token targets.
 
         Args:
-            X: Input representations of shape (N, T', C').
+            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
             targets: List of integer target sequences.
             vocab_size: Number of distinct vocabulary tokens.
 
         Returns:
             TransformerDecoderProbe: Fitted probe instance.
         """
-        in_dim = X.shape[-1]
+        rep_list = _normalize_representations(X)
+        in_dim = rep_list[0].shape[-1]
         self.model = _TorchTransformerDecoder(
             in_dim=in_dim,
             vocab_size=vocab_size,
@@ -416,7 +498,7 @@ class TransformerDecoderProbe(BaseSequenceProbe):
         max_target_len = max(len(t) for t in targets) if targets else 0
         self.max_gen_len = max_target_len + 15
 
-        dataset = _PairDataset(X.to(torch.float32), targets)
+        dataset = _PairDataset(rep_list, targets)
         loader = DataLoader(
             dataset,
             batch_size=max(1, min(self.batch_size, len(dataset))),
@@ -442,11 +524,18 @@ class TransformerDecoderProbe(BaseSequenceProbe):
         )
         for _ in pbar:
             total_loss = 0.0
-            for batch_reps, dec_in, dec_tgt, padding_mask in loader:
+            for (
+                batch_reps,
+                dec_in,
+                dec_tgt,
+                padding_mask,
+                memory_padding_mask,
+            ) in loader:
                 batch_reps = batch_reps.to(self.device)
                 dec_in = dec_in.to(self.device)
                 dec_tgt = dec_tgt.to(self.device)
                 padding_mask = padding_mask.to(self.device)
+                memory_padding_mask = memory_padding_mask.to(self.device)
 
                 s_len = dec_in.size(1)
                 causal_mask = nn.Transformer.generate_square_subsequent_mask(
@@ -459,6 +548,7 @@ class TransformerDecoderProbe(BaseSequenceProbe):
                     tgt=dec_in,
                     tgt_mask=causal_mask,
                     tgt_key_padding_mask=padding_mask,
+                    memory_key_padding_mask=memory_padding_mask,
                 )
                 loss = criterion(
                     logits.reshape(-1, self.model.total_tokens), dec_tgt.reshape(-1)
@@ -470,17 +560,30 @@ class TransformerDecoderProbe(BaseSequenceProbe):
 
         return self
 
-    def predict(self, X: torch.Tensor) -> list[list[int]]:
+    def predict(self, X: torch.Tensor | Sequence[torch.Tensor]) -> list[list[int]]:
         """Predict token ID sequences from representations X.
 
         Args:
-            X: Input representations of shape (N, T', C').
+            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
 
         Returns:
             list[list[int]]: Decoded token sequences.
         """
         if self.model is None:
             raise RuntimeError("TransformerDecoderProbe has not been fitted yet.")
-        return self.model.generate(
-            X.to(torch.float32).to(self.device), max_len=self.max_gen_len
-        )
+        rep_list = _normalize_representations(X)
+        if not rep_list:
+            return []
+        results: list[list[int]] = []
+        step = max(1, self.batch_size)
+        for start in range(0, len(rep_list), step):
+            batch_slice = rep_list[start : start + step]
+            padded_reps, _, memory_padding_mask = _pad_representation_batch(batch_slice)
+            results.extend(
+                self.model.generate(
+                    padded_reps.to(self.device),
+                    max_len=self.max_gen_len,
+                    memory_key_padding_mask=memory_padding_mask.to(self.device),
+                )
+            )
+        return results

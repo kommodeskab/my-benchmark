@@ -36,5 +36,9 @@ This repository implements a modular benchmark suite for downstream audio tasks 
    - Never try to fix malformed data silently (e.g., auto-reshaping audio, coercing types like float sample rates to int).
    - Never try to infer information (e.g., inferring dataset names or guessing metadata keys).
 
-8. **Skill Reference**:
+8. **No Aliases (One Canonical Name)**:
+   - Every class, function, and benchmark must have exactly ONE canonical name.
+   - Never create aliases (e.g. `TIMITRegressionBenchmark = TIMITSpeechDurationRegressionBenchmark`). All classes in the repo must only have one name.
+
+9. **Skill Reference**:
    - Detailed examples and guidelines can be found in the skill at [`.agents/skills/audio-benchmark-dev/SKILL.md`](.agents/skills/audio-benchmark-dev/SKILL.md).

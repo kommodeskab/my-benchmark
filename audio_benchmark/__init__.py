@@ -2,6 +2,15 @@
 
 from audio_benchmark.bayes_opt import BayesOptClassifier, BayesOptRegressor
 from audio_benchmark.benchmark import AudioBenchmark, BenchmarkResult
+from audio_benchmark.benchmarks import (
+    CREMADClassificationBenchmark,
+    SpeechCommandsClassificationBenchmark,
+    TIMITPhonemeSequenceModelingBenchmark,
+    TIMITSpeechDurationRegressionBenchmark,
+    TIMITTextSequenceModelingBenchmark,
+    VCTKAgeRegressionBenchmark,
+    VCTKGenderClassificationBenchmark,
+)
 from audio_benchmark.cache import RepresentationCache
 from audio_benchmark.classifiers import (
     BaseClassifier,
@@ -14,6 +23,12 @@ from audio_benchmark.dataset import (
     BaseDataset,
     parse_dataset_item,
     validate_dataset,
+)
+from audio_benchmark.datasets import (
+    CREMADDataset,
+    SpeechCommandsDataset,
+    TIMITDataset,
+    VCTKDataset,
 )
 from audio_benchmark.dummy import DummyAudioDataset, DummyAudioModel
 from audio_benchmark.exceptions import (
@@ -58,6 +73,8 @@ __all__ = [
     "BayesOptRegressor",
     "BenchmarkError",
     "BenchmarkResult",
+    "CREMADClassificationBenchmark",
+    "CREMADDataset",
     "CTCSequenceProbe",
     "DummyAudioDataset",
     "DummyAudioModel",
@@ -76,10 +93,19 @@ __all__ = [
     "RegressionTask",
     "RepresentationCache",
     "SequenceModelingTask",
+    "SpeechCommandsClassificationBenchmark",
+    "SpeechCommandsDataset",
+    "TIMITDataset",
+    "TIMITPhonemeSequenceModelingBenchmark",
+    "TIMITSpeechDurationRegressionBenchmark",
+    "TIMITTextSequenceModelingBenchmark",
     "TaskError",
     "TransformerBenchmarkClassifier",
     "TransformerBenchmarkRegressor",
     "TransformerDecoderProbe",
+    "VCTKAgeRegressionBenchmark",
+    "VCTKDataset",
+    "VCTKGenderClassificationBenchmark",
     "compute_token_error_rate",
     "downsample_sequence",
     "extract_representations",

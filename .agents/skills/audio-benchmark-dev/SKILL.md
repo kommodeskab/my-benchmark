@@ -132,7 +132,15 @@ X_norm = self.scaler.fit_transform(X_flat).reshape(orig_shape)
 
 ---
 
-## 8. Verification & Tooling
+## 8. No Aliases (One Canonical Name)
+
+- **Single source of truth**: Every class, function, and benchmark must have strictly ONE canonical name.
+- **No alias assignments**: Never create aliases for classes or functions (e.g., do NOT define `TIMITRegressionBenchmark = TIMITSpeechDurationRegressionBenchmark`).
+- Export and import each class under its single, explicit canonical name only.
+
+---
+
+## 9. Verification & Tooling
 
 After generating or modifying code, always verify:
 1. **Formatting**: `uv run ruff format .`

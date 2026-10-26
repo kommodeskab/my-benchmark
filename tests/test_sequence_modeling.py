@@ -276,3 +276,72 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "token_error_rate" in captured.out
     assert "sequence_accuracy" in captured.out
+
+
+def test_sequence_probes_variable_length_representations():
+    """Verify dynamic per-batch zero-padding and masking for variable-length representations."""
+    train_reps = [
+        torch.randn(5, 16),
+        torch.randn(12, 16),
+        torch.randn(8, 16),
+        torch.randn(15, 16),
+    ]
+    targets = [[0, 1], [1, 2, 0], [2], [0, 1, 2]]
+    test_reps = [torch.randn(6, 16), torch.randn(14, 16)]
+
+    tf_probe = TransformerDecoderProbe(
+        d_model=16,
+        nhead=2,
+        num_layers=1,
+        dim_feedforward=32,
+        epochs=1,
+        batch_size=2,
+        device="cpu",
+        show_progress=False,
+    )
+    tf_probe.fit(train_reps, targets, vocab_size=3)
+    tf_preds = tf_probe.predict(test_reps)
+    assert len(tf_preds) == 2
+
+    ctc_probe = CTCSequenceProbe(
+        epochs=1,
+        batch_size=2,
+        device="cpu",
+        show_progress=False,
+    )
+    ctc_probe.fit(train_reps, targets, vocab_size=3)
+    ctc_preds = ctc_probe.predict(test_reps)
+    assert len(ctc_preds) == 2
+
+
+def test_sequence_modeling_task_with_rep_length_slicing():
+    """Verify SequenceModelingTask slices representations to rep_length before probe fitting."""
+    probe = TransformerDecoderProbe(
+        d_model=16,
+        nhead=2,
+        num_layers=1,
+        dim_feedforward=32,
+        epochs=1,
+        batch_size=2,
+        device="cpu",
+        show_progress=False,
+    )
+    task = SequenceModelingTask(probe=probe)
+
+    train_reps = torch.randn(4, 20, 16)
+    train_meta = [
+        {"tokens": ["a", "b"], "rep_length": 6},
+        {"tokens": ["b", "c"], "rep_length": 14},
+        {"tokens": ["a"], "rep_length": 9},
+        {"tokens": ["c", "a"], "rep_length": 20},
+    ]
+    test_reps = torch.randn(2, 20, 16)
+    test_meta = [
+        {"tokens": ["a", "b"], "rep_length": 8},
+        {"tokens": ["b", "c"], "rep_length": 18},
+    ]
+
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert res["task"] == "sequence_modeling"
+    assert res["probe"] == "TransformerDecoderProbe"
+    assert 0.0 <= res["sequence_accuracy"] <= 1.0
