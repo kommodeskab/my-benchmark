@@ -5,9 +5,49 @@ from typing import Any
 
 import torch
 import torchaudio.functional
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 
 from audio_benchmark.exceptions import InvalidDatasetError
+
+
+def deterministic_random_subset(
+    dataset: Any,
+    max_size: int | None,
+    seed: int = 42,
+) -> Any:
+    """Return a deterministic random subset of a dataset if max_size is provided.
+
+    If max_size is None or greater than or equal to the dataset length, the original
+    dataset is returned unchanged. Otherwise, a PyTorch `Subset` indexed by a
+    deterministic random permutation generated using the specified seed is returned.
+
+    Args:
+        dataset: Underlying PyTorch-compatible dataset implementing `__len__`.
+        max_size: Maximum number of samples to retain, or None for the full dataset.
+        seed: Random seed for the deterministic permutation. Defaults to 42.
+
+    Returns:
+        Subset | Any: Random subset if max_size is specified and smaller than dataset,
+            otherwise the original dataset.
+
+    Raises:
+        ValueError: If max_size is not a positive integer.
+        TypeError: If seed is not an integer.
+    """
+    if max_size is None:
+        return dataset
+    if not isinstance(max_size, int) or max_size <= 0:
+        raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
+    if not isinstance(seed, int):
+        raise TypeError(f"seed must be an integer, got {seed!r}")
+
+    dataset_len = len(dataset)
+    if max_size >= dataset_len:
+        return dataset
+
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(dataset_len, generator=generator)[:max_size].tolist()
+    return Subset(dataset, indices)
 
 
 def parse_dataset_item(item: Any) -> dict[str, Any]:

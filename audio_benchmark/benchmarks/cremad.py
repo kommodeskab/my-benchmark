@@ -2,11 +2,9 @@
 
 from pathlib import Path
 
-from torch.utils.data import Subset
-
 from audio_benchmark.benchmark import AudioBenchmark
 from audio_benchmark.classifiers.models import LinearBenchmarkClassifier
-from audio_benchmark.dataset import BaseDataset
+from audio_benchmark.dataset import BaseDataset, deterministic_random_subset
 from audio_benchmark.datasets.cremad import CREMADDataset
 from audio_benchmark.tasks.global_classification import GlobalClassificationTask
 
@@ -21,17 +19,21 @@ class CREMADClassificationBenchmark(AudioBenchmark):
 
     Args:
         max_size: Optional maximum number of samples to evaluate on for each split.
+            If provided, a deterministic random permutation (seed=seed) is used.
+        seed: Random seed used for deterministic subset sampling when max_size is set. Defaults to 42.
         data_dir: Directory where CREMA-D data is cached.
         cache_dir: Directory path for caching representations. Defaults to ".benchmark_cache".
         enable_cache: Whether to cache extracted representations. Defaults to True.
 
     Raises:
         ValueError: If max_size is non-positive.
+        TypeError: If seed is not an integer.
     """
 
     def __init__(
         self,
         max_size: int | None = None,
+        seed: int = 42,
         data_dir: str | Path | None = None,
         cache_dir: str | Path = ".benchmark_cache",
         enable_cache: bool = True,
@@ -39,6 +41,8 @@ class CREMADClassificationBenchmark(AudioBenchmark):
         """Initialize CREMADClassificationBenchmark."""
         if max_size is not None and (not isinstance(max_size, int) or max_size <= 0):
             raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
+        if not isinstance(seed, int):
+            raise TypeError(f"seed must be an integer, got {seed!r}")
 
         task = GlobalClassificationTask(
             classifier=LinearBenchmarkClassifier(model_type="ridge")
@@ -54,9 +58,8 @@ class CREMADClassificationBenchmark(AudioBenchmark):
             seed=42,
         )
 
-        if max_size is not None:
-            train_ds = Subset(train_ds, range(min(len(train_ds), max_size)))
-            val_ds = Subset(val_ds, range(min(len(val_ds), max_size)))
+        train_ds = deterministic_random_subset(train_ds, max_size=max_size, seed=seed)
+        val_ds = deterministic_random_subset(val_ds, max_size=max_size, seed=seed)
 
         wrapped_train_ds = BaseDataset(
             dataset=train_ds,

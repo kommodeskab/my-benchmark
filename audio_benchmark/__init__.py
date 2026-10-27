@@ -20,6 +20,7 @@ from audio_benchmark.classifiers import (
 )
 from audio_benchmark.dataset import (
     BaseDataset,
+    deterministic_random_subset,
     parse_dataset_item,
     validate_dataset,
 )
@@ -104,6 +105,7 @@ __all__ = [
     "VCTKDataset",
     "VCTKGenderClassificationBenchmark",
     "compute_token_error_rate",
+    "deterministic_random_subset",
     "downsample_sequence",
     "extract_representations",
     "levenshtein_distance",

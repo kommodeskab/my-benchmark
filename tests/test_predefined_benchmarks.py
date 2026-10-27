@@ -118,9 +118,39 @@ class TestSpeechCommandsClassificationBenchmark:
         assert len(benchmark.dataset) == 3
         assert len(benchmark.testset) == 3
 
+    @patch("audio_benchmark.benchmarks.speech_commands.SpeechCommandsDataset")
+    def test_deterministic_random_permutation(self, mock_sc_dataset, tmp_path) -> None:
+        mock_sc_dataset.side_effect = [
+            _MockClassificationDataset(size=10),
+            _MockClassificationDataset(size=6),
+            _MockClassificationDataset(size=10),
+            _MockClassificationDataset(size=6),
+        ]
+
+        bench1 = SpeechCommandsClassificationBenchmark(
+            max_size=4,
+            seed=42,
+            cache_dir=tmp_path / "cache1",
+            enable_cache=False,
+        )
+        bench2 = SpeechCommandsClassificationBenchmark(
+            max_size=4,
+            seed=42,
+            cache_dir=tmp_path / "cache2",
+            enable_cache=False,
+        )
+
+        indices1 = [bench1.dataset.dataset.indices]  # type: ignore[attr-defined]
+        indices2 = [bench2.dataset.dataset.indices]  # type: ignore[attr-defined]
+        assert indices1 == indices2
+
     def test_invalid_max_size_raises(self) -> None:
         with pytest.raises(ValueError, match="max_size must be a positive integer"):
             SpeechCommandsClassificationBenchmark(max_size=0)
+
+    def test_invalid_seed_raises(self) -> None:
+        with pytest.raises(TypeError, match="seed must be an integer"):
+            SpeechCommandsClassificationBenchmark(seed="invalid")  # type: ignore[arg-type]
 
 
 class TestCREMADClassificationBenchmark:
