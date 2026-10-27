@@ -3,27 +3,11 @@
 from collections.abc import Sequence
 from typing import Any
 
-import numpy as np
 import torch
 import torchaudio.functional
 from torch.utils.data import Dataset
 
 from audio_benchmark.exceptions import InvalidDatasetError
-
-ALLOWED_METADATA_KEYS = frozenset(
-    {
-        "label",
-        "target",
-        "frame_labels",
-        "frame_targets",
-        "tokens",
-        "speech_duration",
-        "gender",
-        "age",
-        "phonemes",
-        "text",
-    }
-)
 
 
 def parse_dataset_item(item: Any) -> dict[str, Any]:
@@ -73,11 +57,7 @@ def parse_dataset_item(item: Any) -> dict[str, Any]:
             f"Waveform must have shape (1, T), but got shape {tuple(waveform.shape)}."
         )
 
-    if (
-        not isinstance(sample_rate, int)
-        or isinstance(sample_rate, bool)
-        or sample_rate <= 0
-    ):
+    if not isinstance(sample_rate, int) or sample_rate <= 0:
         raise InvalidDatasetError(
             f"Dataset item['sample_rate'] must be a positive integer, but got {sample_rate!r}."
         )
@@ -172,21 +152,24 @@ def collate_audio_batch(
 
 
 class BaseDataset(Dataset):
-    """Wrapper dataset that resamples audio and pads or crops audio and frame metadata.
+    """Wrapper dataset that resamples audio, normalizes waveforms, and pads or crops audio and frame metadata.
 
     Wraps an underlying dataset that returns dictionaries containing 'waveform' of shape (1, T),
-    'sample_rate', and 'metadata'. Resamples audio to `sample_rate` and pads or crops to `length`
-    samples. When resampling audio, dictionary sample timestamps are scaled while uniform sequence
-    targets are left unchanged. When cropping or padding to `length`, dictionary timestamps >= length
-    are dropped, and uniform sequence targets are sliced or padded to match.
+    'sample_rate', and 'metadata'. Resamples audio to `sample_rate`, optionally normalizes audio
+    samples to zero mean and unit variance, and pads or crops to `length` samples. When resampling
+    audio, dictionary sample timestamps are scaled while uniform sequence targets are left
+    unchanged. When cropping or padding to `length`, dictionary timestamps >= length are dropped,
+    and uniform sequence targets are sliced or padded to match.
 
     Args:
         dataset: Underlying PyTorch-compatible dataset.
         dataset_name: Explicit identifier name for the dataset.
         sample_rate: Target audio sampling rate in Hz.
         length: Target audio length in samples. If None, audio is resampled without padding or cropping.
+        normalize: Whether to normalize audio samples to mean 0 and standard deviation 1. Defaults to True.
 
     Raises:
+        TypeError: If normalize is not a boolean.
         ValueError: If dataset_name is empty, or sample_rate/length are not positive integers.
         InvalidDatasetError: If dataset does not implement __len__ and __getitem__.
     """
@@ -197,7 +180,7 @@ class BaseDataset(Dataset):
         dataset_name: str,
         sample_rate: int,
         length: int | None = None,
-        target_key: str | None = None,
+        normalize: bool = True,
     ) -> None:
         """Initialize the BaseDataset wrapper.
 
@@ -206,9 +189,10 @@ class BaseDataset(Dataset):
             dataset_name: Explicit identifier name for the dataset.
             sample_rate: Target audio sampling rate in Hz.
             length: Target audio length in samples (None for no padding/cropping).
-            target_key: Optional explicit target or label metadata key to consider valid.
+            normalize: Whether to normalize audio samples to mean 0 and standard deviation 1. Defaults to True.
 
         Raises:
+            TypeError: If normalize is not a boolean.
             ValueError: If dataset_name is not a non-empty string, or sample_rate/length are not positive integers.
             InvalidDatasetError: If dataset does not implement __len__ and __getitem__.
         """
@@ -221,25 +205,23 @@ class BaseDataset(Dataset):
             raise InvalidDatasetError("Wrapped dataset cannot be a string or bytes.")
         if not isinstance(dataset_name, str) or not dataset_name.strip():
             raise ValueError("dataset_name must be a non-empty string.")
-        if (
-            not isinstance(sample_rate, int)
-            or isinstance(sample_rate, bool)
-            or sample_rate <= 0
-        ):
+        if not isinstance(sample_rate, int) or sample_rate <= 0:
             raise ValueError(
                 f"sample_rate must be a positive integer, got {sample_rate}."
             )
-        if length is not None and (
-            not isinstance(length, int) or isinstance(length, bool) or length <= 0
-        ):
+        if length is not None and (not isinstance(length, int) or length <= 0):
             raise ValueError(f"length must be a positive integer, got {length}.")
+        if not isinstance(normalize, bool):
+            raise TypeError(
+                f"normalize must be a boolean, got {type(normalize).__name__}."
+            )
 
         self.dataset = dataset
         self.dataset_name = dataset_name.strip()
         self.name = self.dataset_name
         self.sample_rate = sample_rate
         self.length = length
-        self.target_key = target_key
+        self.normalize = normalize
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset.
@@ -284,16 +266,21 @@ class BaseDataset(Dataset):
         orig_sr = parsed["sample_rate"]
         metadata = dict(parsed["metadata"])
 
-        allowed = (
-            ALLOWED_METADATA_KEYS | {self.target_key}
-            if self.target_key is not None
-            else ALLOWED_METADATA_KEYS
-        )
-        if not any(k in allowed for k in metadata):
-            raise InvalidDatasetError(
-                "Metadata must contain at least one of 'label', 'target', "
-                "'frame_labels', 'frame_targets', 'tokens', or 'speech_duration'."
-            )
+        for key in ("frame_targets", "frame_labels"):
+            if key in metadata:
+                val = metadata[key]
+                if isinstance(val, dict):
+                    for k in val:
+                        if not isinstance(k, int):
+                            raise InvalidDatasetError(
+                                f"Timestamp key {k!r} in '{key}' must be an integer, got {type(k).__name__}."
+                            )
+                elif isinstance(val, list):
+                    pass
+                else:
+                    raise InvalidDatasetError(
+                        f"Metadata key '{key}' must be a list or dict[int, Any], got {type(val).__name__}."
+                    )
 
         if orig_sr != self.sample_rate:
             waveform = torchaudio.functional.resample(
@@ -304,15 +291,7 @@ class BaseDataset(Dataset):
                 if key in metadata:
                     val = metadata[key]
                     if isinstance(val, dict):
-                        scaled: dict[Any, Any] = {}
-                        for k, v in val.items():
-                            if isinstance(k, int):
-                                new_k = round(k * ratio)
-                            else:
-                                new_k = str(round(int(k) * ratio))
-                            scaled[new_k] = v
-                        metadata[key] = scaled
-                    # Uniform sequence targets remain unchanged per R4.
+                        metadata[key] = {round(k * ratio): v for k, v in val.items()}
 
         if self.length is not None:
             cur_len = waveform.shape[-1]
@@ -323,10 +302,7 @@ class BaseDataset(Dataset):
                         val = metadata[key]
                         if isinstance(val, dict):
                             metadata[key] = {
-                                k: v
-                                for k, v in val.items()
-                                if (int(k) if isinstance(k, (int, str)) else k)
-                                < self.length
+                                k: v for k, v in val.items() if k < self.length
                             }
                         else:
                             keep_len = (
@@ -335,25 +311,28 @@ class BaseDataset(Dataset):
                                 else max(1, round(len(val) * self.length / cur_len))
                             )
                             metadata[key] = val[:keep_len]
-            elif cur_len < self.length:
-                pad_amount = self.length - cur_len
-                waveform = torch.nn.functional.pad(waveform, (0, pad_amount), value=0.0)
-                pad_val_map = {"frame_targets": 0.0, "frame_labels": 0}
-                for key in ("frame_targets", "frame_labels"):
-                    if key in metadata:
-                        val = metadata[key]
-                        if isinstance(val, dict):
-                            pass
-                        else:
-                            target_pad = (
-                                pad_amount
-                                if len(val) == cur_len
-                                else round(len(val) * self.length / cur_len) - len(val)
-                            )
-                            if target_pad > 0:
-                                metadata[key] = self._pad_sequence(
-                                    val, target_pad, pad_val=pad_val_map.get(key, 0)
-                                )
+
+        if self.normalize:
+            waveform = (waveform - waveform.mean()) / waveform.std()
+
+        if self.length is not None and waveform.shape[-1] < self.length:
+            cur_len = waveform.shape[-1]
+            pad_amount = self.length - cur_len
+            waveform = torch.nn.functional.pad(waveform, (0, pad_amount), value=0.0)
+            pad_val_map = {"frame_targets": 0.0, "frame_labels": 0}
+            for key in ("frame_targets", "frame_labels"):
+                if key in metadata:
+                    val = metadata[key]
+                    if isinstance(val, dict):
+                        pass
+                    else:
+                        target_pad = (
+                            pad_amount
+                            if len(val) == cur_len
+                            else round(len(val) * self.length / cur_len) - len(val)
+                        )
+                        if target_pad > 0:
+                            metadata[key] = val + [pad_val_map.get(key, 0)] * target_pad
 
         metadata["audio_length"] = waveform.shape[-1]
         return {
@@ -361,55 +340,3 @@ class BaseDataset(Dataset):
             "sample_rate": self.sample_rate,
             "metadata": metadata,
         }
-
-    def _resample_sequence(self, sequence: Any, target_len: int, mode: str) -> Any:
-        """Resample a sequence to target_len using downsample_sequence.
-
-        Args:
-            sequence: Sequence to resample.
-            target_len: Target length in frames.
-            mode: Downsample aggregation mode ('mean' or 'mode').
-
-        Returns:
-            Resampled sequence preserving container type.
-        """
-        if len(sequence) == target_len:
-            return sequence
-
-        from audio_benchmark.tasks.downsampling import downsample_sequence
-
-        if isinstance(sequence, torch.Tensor):
-            res = downsample_sequence(
-                sequence.detach().cpu().numpy(), target_len, mode=mode
-            )
-            return torch.as_tensor(res, dtype=sequence.dtype, device=sequence.device)
-        elif isinstance(sequence, np.ndarray):
-            res = downsample_sequence(sequence, target_len, mode=mode)
-            return res.astype(sequence.dtype)
-
-        res = downsample_sequence(sequence, target_len, mode=mode)
-        if mode == "mode" and sequence:
-            elem_type = type(sequence[0])
-            return [elem_type(x) for x in res]
-        return res.tolist()
-
-    def _pad_sequence(self, sequence: Any, pad_amount: int, pad_val: float) -> Any:
-        """Pad a sequence with pad_val.
-
-        Args:
-            sequence: Sequence to pad.
-            pad_amount: Number of elements to pad at the end.
-            pad_val: Constant value to pad with.
-
-        Returns:
-            Padded sequence preserving container type.
-        """
-        if isinstance(sequence, torch.Tensor):
-            return torch.nn.functional.pad(sequence, (0, pad_amount), value=pad_val)
-        elif isinstance(sequence, np.ndarray):
-            return np.pad(
-                sequence, (0, pad_amount), mode="constant", constant_values=pad_val
-            )
-        elif isinstance(sequence, tuple):
-            return tuple(list(sequence) + [pad_val] * pad_amount)
-        return list(sequence) + [pad_val] * pad_amount

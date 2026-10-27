@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+from torch.utils.data import Dataset
 
 from audio_benchmark.classifiers import (
     KNNBenchmarkClassifier,
@@ -11,6 +12,21 @@ from audio_benchmark.classifiers import (
 )
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.global_classification import GlobalClassificationTask
+
+
+class SimpleDataset(Dataset):
+    def __init__(self, samples):
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return {
+            "waveform": torch.randn(1, 160),
+            "sample_rate": 16000,
+            "metadata": self.samples[idx],
+        }
 
 
 def test_global_classification_with_different_classifiers():
@@ -26,7 +42,7 @@ def test_global_classification_with_different_classifiers():
     test_meta = [{"label": f"cls_{i % 2}"} for i in range(4)]
 
     # Test examine_data provides dataset statistics and baseline metric
-    info = task_knn.examine_data(train_meta, test_meta)
+    info = task_knn.examine_data(SimpleDataset(train_meta), SimpleDataset(test_meta))
     assert info["num_classes"] == 2
     assert info["train_samples"] == 12
     assert info["test_samples"] == 4
@@ -114,12 +130,18 @@ def test_global_classification_single_class_raises():
 
 
 def test_global_classification_string_classifier_raises():
-    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+    with pytest.raises(
+        TypeError,
+        match=r"classifier must be an instantiated BaseClassifier instance, got str",
+    ):
         GlobalClassificationTask(classifier="knn")
 
 
 def test_global_classification_none_or_missing_classifier_raises():
-    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+    with pytest.raises(
+        TypeError,
+        match=r"classifier must be an instantiated BaseClassifier instance, got NoneType",
+    ):
         GlobalClassificationTask(classifier=None)
     with pytest.raises(TypeError):
         GlobalClassificationTask()

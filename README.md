@@ -91,20 +91,21 @@ class MyAudioDatasetWrapper(Dataset):
 
 ### Standardizing with `BaseDataset`
 
-Use `BaseDataset` to automatically resample audio to a unified `sample_rate` and pad/crop waveforms and frame-level metadata to a fixed `length` in samples:
+Use `BaseDataset` to automatically resample audio to a unified `sample_rate`, normalize waveforms to zero mean and unit variance, and pad/crop waveforms and frame-level metadata to a fixed `length` in samples:
 
 ```python
 from audio_benchmark import BaseDataset
 
-# Standardize to 16kHz and fixed 1-second clips (16,000 samples)
+# Standardize to 16kHz, normalized, and fixed 1-second clips (16,000 samples)
 standardized_dataset = BaseDataset(
     dataset=my_raw_dataset,
     dataset_name="my_dataset",
     sample_rate=16000,
     length=16000,
+    normalize=True,
 )
 ```
-- Audio waveforms are resampled and padded/cropped to `(1, length)`.
+- Audio waveforms are resampled, normalized (mean 0 and std 1), and padded/cropped to `(1, length)`.
 - Frame metadata (`frame_targets` and `frame_labels`) is resampled, padded, and cropped to match.
 - Non-frame metadata (`label`, `target`, and `tokens`) is safely preserved without cropping.
 
@@ -120,7 +121,7 @@ Classifies a single categorical label for the entire audio clip.
   - For models operating on pooled representations (such as `LinearBenchmarkClassifier`, `KNNBenchmarkClassifier`, `MLPBenchmarkClassifier`): sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
   - For models accepting sequences directly (such as `TransformerBenchmarkClassifier`): **no pooling** is applied; a non-causal Transformer encoder attends across all temporal frames directly.
 - **Parameters**:
-  - `classifier` (`BaseClassifier`, required): An explicit instantiated classifier model (e.g., `LinearBenchmarkClassifier()`, `KNNBenchmarkClassifier()`, `MLPBenchmarkClassifier()`, `TransformerBenchmarkClassifier()`, or `BayesOptClassifier(...)`). Passing `None` is not allowed.
+  - `classifier` (`BaseClassifier`, required): An explicit instantiated classifier model (e.g., `LinearBenchmarkClassifier()`, `KNNBenchmarkClassifier()`, `MLPBenchmarkClassifier()`, or `TransformerBenchmarkClassifier()`). Passing `None` is not allowed.
   - `label_key` (`str`, default `"label"`): Key in sample metadata containing the ground truth label.
   - `pooling` (`str`, default `"mean"`): Temporal pooling method for classifiers that do not accept 3D sequence tensors (`"mean"`, `"max"`, `"first"`, `"last"`). Bypassed when using sequence models like `TransformerBenchmarkClassifier`.
   - `metric` (`str`, default `"accuracy"`): Main metric for the task (`"accuracy"`, `"macro_f1"`, `"micro_f1"`), also populated in `result.metrics["value"]`.
@@ -159,7 +160,7 @@ Predicts a continuous target value for the entire audio clip.
   - For models operating on pooled representations (such as `LinearBenchmarkRegressor`, `KNNBenchmarkRegressor`, `MLPBenchmarkRegressor`): sequence representations `(B, T', C')` are pooled over time to `(B, C')`.
   - For models accepting sequences directly (such as `TransformerBenchmarkRegressor`): **no pooling** is applied; a non-causal Transformer attends across all temporal frames directly.
 - **Parameters**:
-  - `regressor` (`BaseRegressor`, required): An explicit instantiated regressor model (e.g., `LinearBenchmarkRegressor()`, `KNNBenchmarkRegressor()`, `MLPBenchmarkRegressor()`, `TransformerBenchmarkRegressor()`, or `BayesOptRegressor(...)`). Passing `None` is not allowed.
+  - `regressor` (`BaseRegressor`, required): An explicit instantiated regressor model (e.g., `LinearBenchmarkRegressor()`, `KNNBenchmarkRegressor()`, `MLPBenchmarkRegressor()`, or `TransformerBenchmarkRegressor()`). Passing `None` is not allowed.
   - `target_key` (`str`, default `"target"`): Key in sample metadata containing the numeric target.
   - `pooling` (`str`, default `"mean"`): Temporal pooling method for linear/KNN/MLP. Bypassed for sequence models like `TransformerBenchmarkRegressor`.
   - `metric` (`str`, default `"r2"`): Main metric for the task (`"r2"`, `"mse"`, `"rmse"`, `"mae"`, `"pearson_r"`), also populated in `result.metrics["value"]`.
@@ -314,62 +315,6 @@ for res in [res_clf, res_reg, res_seq]:
 print(f"Classification accuracy: {res_clf.metrics['accuracy'] * 100:.1f}%")
 print(f"Downstream probe training time: {res_clf.metrics['training_time']:.4f}s")
 ```
-
----
-
-## Bayesian Optimization for Downstream Models
-
-You can optimize downstream classifier and regressor hyperparameters via Bayesian optimization using [`BayesOptClassifier`](file:///home/andbagge/my-benchmark/audio_benchmark/bayes_opt.py) and [`BayesOptRegressor`](file:///home/andbagge/my-benchmark/audio_benchmark/bayes_opt.py).
-
-The wrappers use [Optuna](https://optuna.org/) to run K-fold cross-validation on the training set, select the optimal hyperparameter combination, and evaluate only the best-performing model on the downstream test set. Progress is displayed in real time using `tqdm`.
-
-### Quick Example
-
-```python
-from audio_benchmark import (
-    AudioBenchmark,
-    BayesOptClassifier,
-    BayesOptRegressor,
-    GlobalClassificationTask,
-    KNNBenchmarkClassifier,
-    MLPBenchmarkClassifier,
-    RegressionTask,
-)
-
-# Optimize KNN classifier hyperparameters (e.g. n_neighbors, distance metric)
-knn_space = {
-    "n_neighbors": (1, 15),
-    "metric": ["minkowski", "cosine", "euclidean"],
-}
-opt_clf = BayesOptClassifier(
-    base_model=KNNBenchmarkClassifier(), param_space=knn_space, n_trials=15, cv=3
-)
-task_clf = GlobalClassificationTask(classifier=opt_clf)
-
-benchmark = AudioBenchmark(
-    dataset=train_dataset,
-    testset=test_dataset,
-    task=task_clf,
-    dataset_name="speech",
-)
-result = benchmark.run(model=my_model, model_name="encoder")
-
-# Benchmark reports standard metrics for the best model plus best hyperparameters:
-result.print_summary()
-print("Best hyperparameters found:", result.metrics["best_params"])
-print("Best CV score:", result.metrics["best_cv_score"])
-
-# Custom parameter spaces (handling discrete choices, integer ranges, and continuous values):
-custom_space = {
-    "hidden_dim": [64, 128, 256],  # Discrete categorical choices
-    "lr": (1e-4, 1e-2, "log"),  # Continuous log-uniform float
-    "dropout": (0.0, 0.4),  # Continuous uniform float
-}
-opt_mlp = BayesOptClassifier(
-    base_model=MLPBenchmarkClassifier(), param_space=custom_space, n_trials=10
-)
-```
-
 ---
 
 ## Running Tests

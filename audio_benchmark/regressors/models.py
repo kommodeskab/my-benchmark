@@ -13,7 +13,6 @@ from torch import nn
 from audio_benchmark.utils import (
     PositionalEncoding,
     resolve_device,
-    to_numpy,
     train_torch_model,
 )
 
@@ -22,9 +21,7 @@ class BaseRegressor(ABC):
     """Abstract base class for downstream benchmark regressors."""
 
     @abstractmethod
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "BaseRegressor":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "BaseRegressor":
         """Train the regressor on representation features X and continuous targets y.
 
         Args:
@@ -36,19 +33,17 @@ class BaseRegressor(ABC):
         """
 
     @abstractmethod
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict continuous targets for features X.
 
         Args:
             X: Input feature representations of shape (N, C) or (N, T', C').
 
         Returns:
-            np.ndarray: Predicted continuous targets of shape (N,).
+            torch.Tensor: Predicted continuous targets of shape (N,).
         """
 
-    def evaluate(
-        self, X_test: np.ndarray | torch.Tensor, y_test: np.ndarray | torch.Tensor
-    ) -> dict[str, float]:
+    def evaluate(self, X_test: torch.Tensor, y_test: torch.Tensor) -> dict[str, float]:
         """Evaluate predictions against ground truth targets.
 
         Args:
@@ -58,8 +53,8 @@ class BaseRegressor(ABC):
         Returns:
             dict[str, float]: Dictionary containing 'mse', 'rmse', 'mae', 'r2', and 'pearson_r'.
         """
-        y_test_np = to_numpy(y_test).ravel()
-        y_pred = self.predict(X_test).ravel()
+        y_test_np = y_test.detach().cpu().numpy().ravel()
+        y_pred = self.predict(X_test).detach().cpu().numpy().ravel()
 
         mse = float(mean_squared_error(y_test_np, y_pred))
         rmse = float(np.sqrt(mse))
@@ -104,9 +99,7 @@ class LinearBenchmarkRegressor(BaseRegressor):
         self.scaler: StandardScaler | None = None
         self.model = Ridge(alpha=alpha, random_state=random_state)
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "LinearBenchmarkRegressor":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "LinearBenchmarkRegressor":
         """Fit the linear regressor on features X and targets y.
 
         Args:
@@ -116,8 +109,8 @@ class LinearBenchmarkRegressor(BaseRegressor):
         Returns:
             LinearBenchmarkRegressor: Fitted regressor instance.
         """
-        X_np = to_numpy(X)
-        y_np = to_numpy(y).ravel()
+        X_np = X.detach().cpu().numpy()
+        y_np = y.detach().cpu().numpy().ravel()
         if self.normalize_features:
             self.scaler = StandardScaler()
             X_np = self.scaler.fit_transform(X_np).astype(np.float32)
@@ -126,19 +119,19 @@ class LinearBenchmarkRegressor(BaseRegressor):
         self.model.fit(X_np, y_np)
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict continuous targets for features X.
 
         Args:
             X: Input feature matrix of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted continuous targets of shape (N,).
+            torch.Tensor: Predicted continuous targets of shape (N,).
         """
-        X_np = to_numpy(X)
+        X_np = X.detach().cpu().numpy()
         if self.scaler is not None:
             X_np = self.scaler.transform(X_np).astype(np.float32)
-        return self.model.predict(X_np)
+        return torch.as_tensor(self.model.predict(X_np))
 
 
 class KNNBenchmarkRegressor(BaseRegressor):
@@ -167,9 +160,7 @@ class KNNBenchmarkRegressor(BaseRegressor):
             n_neighbors=n_neighbors, metric=metric, weights=weights
         )
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "KNNBenchmarkRegressor":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "KNNBenchmarkRegressor":
         """Fit the KNN regressor on features X and targets y.
 
         Args:
@@ -179,8 +170,8 @@ class KNNBenchmarkRegressor(BaseRegressor):
         Returns:
             KNNBenchmarkRegressor: Fitted regressor instance.
         """
-        X_np = to_numpy(X)
-        y_np = to_numpy(y).ravel()
+        X_np = X.detach().cpu().numpy()
+        y_np = y.detach().cpu().numpy().ravel()
         if self.normalize_features:
             self.scaler = StandardScaler()
             X_np = self.scaler.fit_transform(X_np).astype(np.float32)
@@ -194,19 +185,19 @@ class KNNBenchmarkRegressor(BaseRegressor):
         self.model.fit(X_np, y_np)
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict continuous targets for features X.
 
         Args:
             X: Input feature matrix of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted continuous targets of shape (N,).
+            torch.Tensor: Predicted continuous targets of shape (N,).
         """
-        X_np = to_numpy(X)
+        X_np = X.detach().cpu().numpy()
         if self.scaler is not None:
             X_np = self.scaler.transform(X_np).astype(np.float32)
-        return self.model.predict(X_np)
+        return torch.as_tensor(self.model.predict(X_np))
 
 
 class _TorchMLPRegressor(nn.Module):
@@ -298,9 +289,7 @@ class MLPBenchmarkRegressor(BaseRegressor):
         self.y_mean: float = 0.0
         self.y_std: float = 1.0
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "MLPBenchmarkRegressor":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "MLPBenchmarkRegressor":
         """Train the MLP regressor on features X and targets y.
 
         Args:
@@ -310,15 +299,17 @@ class MLPBenchmarkRegressor(BaseRegressor):
         Returns:
             MLPBenchmarkRegressor: Fitted regressor instance.
         """
-        X_np = to_numpy(X)
         if self.normalize_features:
             self.scaler = StandardScaler()
-            X_np = self.scaler.fit_transform(X_np).astype(np.float32)
+            X_np = self.scaler.fit_transform(X.detach().cpu().numpy()).astype(
+                np.float32
+            )
+            X_t = torch.as_tensor(X_np, dtype=torch.float32)
         else:
             self.scaler = None
+            X_t = X.detach().to(dtype=torch.float32)
 
-        X_t = torch.as_tensor(X_np, dtype=torch.float32)
-        y_t = torch.as_tensor(to_numpy(y), dtype=torch.float32).ravel()
+        y_t = y.detach().to(dtype=torch.float32).ravel()
 
         self.y_mean = float(y_t.mean().item())
         self.y_std = float(y_t.std().item()) if float(y_t.std().item()) > 1e-8 else 1.0
@@ -347,26 +338,27 @@ class MLPBenchmarkRegressor(BaseRegressor):
         )
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict continuous targets for features X.
 
         Args:
             X: Input feature representations of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted continuous targets of shape (N,).
+            torch.Tensor: Predicted continuous targets of shape (N,).
         """
         if self.model is None:
             raise RuntimeError("Regressor has not been fitted yet.")
 
-        X_np = to_numpy(X)
         if self.scaler is not None:
-            X_np = self.scaler.transform(X_np).astype(np.float32)
+            X_np = self.scaler.transform(X.detach().cpu().numpy()).astype(np.float32)
+            X_t = torch.as_tensor(X_np, dtype=torch.float32).to(self.device)
+        else:
+            X_t = X.detach().to(device=self.device, dtype=torch.float32)
 
         self.model.eval()
-        X_t = torch.as_tensor(X_np, dtype=torch.float32).to(self.device)
         with torch.inference_mode():
-            preds = self.model(X_t).cpu().numpy()
+            preds = self.model(X_t).cpu()
         return preds * self.y_std + self.y_mean
 
 
@@ -504,9 +496,7 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         self.y_mean: float = 0.0
         self.y_std: float = 1.0
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "TransformerBenchmarkRegressor":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "TransformerBenchmarkRegressor":
         """Train the transformer regressor on representation sequences X and targets y.
 
         Args:
@@ -516,21 +506,22 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         Returns:
             TransformerBenchmarkRegressor: Fitted regressor instance.
         """
-        X_np = to_numpy(X)
         if self.normalize_features:
             self.scaler = StandardScaler()
+            X_np = X.detach().cpu().numpy()
             orig_shape = X_np.shape
             X_flat = X_np.reshape(-1, orig_shape[-1])
             X_np = (
                 self.scaler.fit_transform(X_flat).astype(np.float32).reshape(orig_shape)
             )
+            X_t = torch.as_tensor(X_np, dtype=torch.float32)
         else:
             self.scaler = None
+            X_t = X.detach().to(dtype=torch.float32)
 
-        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
-        y_t = torch.as_tensor(to_numpy(y), dtype=torch.float32).ravel()
+        y_t = y.detach().to(dtype=torch.float32).ravel()
 
         self.y_mean = float(y_t.mean().item())
         self.y_std = float(y_t.std().item()) if float(y_t.std().item()) > 1e-8 else 1.0
@@ -562,30 +553,32 @@ class TransformerBenchmarkRegressor(BaseRegressor):
         )
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict continuous targets for representations X.
 
         Args:
             X: Input sequence representations of shape (N, T', C') or (N, C').
 
         Returns:
-            np.ndarray: Predicted continuous targets of shape (N,).
+            torch.Tensor: Predicted continuous targets of shape (N,).
         """
         if self.model is None:
             raise RuntimeError("Regressor has not been fitted yet.")
 
-        X_np = to_numpy(X)
         if self.scaler is not None:
+            X_np = X.detach().cpu().numpy()
             orig_shape = X_np.shape
             X_flat = X_np.reshape(-1, orig_shape[-1])
             X_np = self.scaler.transform(X_flat).astype(np.float32).reshape(orig_shape)
+            X_t = torch.as_tensor(X_np, dtype=torch.float32)
+        else:
+            X_t = X.detach().to(dtype=torch.float32)
 
-        self.model.eval()
-        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
         X_t = X_t.to(self.device)
 
+        self.model.eval()
         with torch.inference_mode():
-            preds = self.model(X_t).cpu().numpy()
+            preds = self.model(X_t).cpu()
         return preds * self.y_std + self.y_mean

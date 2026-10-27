@@ -39,9 +39,7 @@ class SpeechCommandsClassificationBenchmark(AudioBenchmark):
         download: bool = True,
     ) -> None:
         """Initialize SpeechCommandsClassificationBenchmark."""
-        if max_size is not None and (
-            not isinstance(max_size, int) or isinstance(max_size, bool) or max_size <= 0
-        ):
+        if max_size is not None and (not isinstance(max_size, int) or max_size <= 0):
             raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
 
         task = GlobalClassificationTask(
@@ -67,12 +65,14 @@ class SpeechCommandsClassificationBenchmark(AudioBenchmark):
             dataset_name="Speech Commands train",
             sample_rate=16000,
             length=16000,
+            normalize=True,
         )
         wrapped_val_ds = BaseDataset(
             dataset=val_ds,
             dataset_name="Speech Commands val",
             sample_rate=16000,
             length=16000,
+            normalize=True,
         )
 
         super().__init__(

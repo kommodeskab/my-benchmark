@@ -29,6 +29,22 @@ class MismatchedFrameDataset(Dataset):
         }
 
 
+class SimpleDataset(Dataset):
+    def __init__(self, samples, audio_length: int = 16):
+        self.samples = samples
+        self.audio_length = audio_length
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return {
+            "waveform": torch.randn(1, self.audio_length),
+            "sample_rate": 16000,
+            "metadata": self.samples[idx],
+        }
+
+
 def test_frame_classification_with_knn_and_mlp():
     task_linear = FrameClassificationTask(classifier=LinearBenchmarkClassifier())
     task_knn = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
@@ -42,7 +58,10 @@ def test_frame_classification_with_knn_and_mlp():
     test_reps = torch.randn(2, 4, 8)
     test_meta = [{"frame_labels": [i % 2] * 16} for i in range(2)]
 
-    info = task_knn.examine_data(train_meta, test_meta)
+    info = task_knn.examine_data(
+        SimpleDataset(train_meta, audio_length=16),
+        SimpleDataset(test_meta, audio_length=16),
+    )
     assert info["train_clips"] == 6
     assert info["test_clips"] == 2
     assert info["frame_length"] == 16
@@ -153,7 +172,10 @@ def test_frame_classification_variable_length_and_dictionary():
         assert "training_time" in res
 
     # Verify examine_data computes correct stats on variable length / dict targets
-    info = task_mean.examine_data(train_meta, test_meta)
+    info = task_mean.examine_data(
+        SimpleDataset(train_meta, audio_length=60),
+        SimpleDataset(test_meta, audio_length=60),
+    )
     assert info["train_clips"] == 4
     assert info["test_clips"] == 2
     # Total train frames: 3 + 5 + 2 + 12 = 22
@@ -203,12 +225,18 @@ def test_benchmark_runner_with_frame_classification(tmp_path):
 
 
 def test_frame_classification_string_classifier_raises():
-    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+    with pytest.raises(
+        TypeError,
+        match=r"classifier must be an instantiated BaseClassifier instance, got str",
+    ):
         FrameClassificationTask(classifier="knn")
 
 
 def test_frame_classification_none_or_missing_classifier_raises():
-    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+    with pytest.raises(
+        TypeError,
+        match=r"classifier must be an instantiated BaseClassifier instance, got NoneType",
+    ):
         FrameClassificationTask(classifier=None)
     with pytest.raises(TypeError):
         FrameClassificationTask()

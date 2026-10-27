@@ -2,22 +2,7 @@
 
 from __future__ import annotations
 
-import numpy as np
 import torch
-
-
-def to_numpy(x: np.ndarray | torch.Tensor) -> np.ndarray:
-    """Convert a PyTorch tensor or array-like object to a NumPy array.
-
-    Args:
-        x: Input tensor or array-like data structure.
-
-    Returns:
-        np.ndarray: NumPy array representation of the input.
-    """
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().numpy()
-    return np.asarray(x)
 
 
 def resolve_device(device: str | torch.device | None = "auto") -> torch.device:

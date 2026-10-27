@@ -345,7 +345,7 @@ def test_base_dataset_dictionary_targets_resample_crop_pad():
                 "sample_rate": 16000,
                 "metadata": {
                     "frame_targets": {0: 1.0, 8000: 2.0, 12000: 3.0},
-                    "frame_labels": {"0": 0, "8000": 1, "12000": 2},
+                    "frame_labels": {0: 0, 8000: 1, 12000: 2},
                 },
             }
 
@@ -355,21 +355,21 @@ def test_base_dataset_dictionary_targets_resample_crop_pad():
     item = resampled[0]
     assert item["waveform"].shape == (1, 8000)
     assert item["metadata"]["frame_targets"] == {0: 1.0, 4000: 2.0, 6000: 3.0}
-    assert item["metadata"]["frame_labels"] == {"0": 0, "4000": 1, "6000": 2}
+    assert item["metadata"]["frame_labels"] == {0: 0, 4000: 1, 6000: 2}
 
     # Crop to length 5000: timestamps >= 5000 are dropped
     cropped = BaseDataset(ds, dataset_name="dict_ds", sample_rate=8000, length=5000)
     item_cropped = cropped[0]
     assert item_cropped["waveform"].shape == (1, 5000)
     assert item_cropped["metadata"]["frame_targets"] == {0: 1.0, 4000: 2.0}
-    assert item_cropped["metadata"]["frame_labels"] == {"0": 0, "4000": 1}
+    assert item_cropped["metadata"]["frame_labels"] == {0: 0, 4000: 1}
 
     # Pad to length 10000: all timestamps remain
     padded = BaseDataset(ds, dataset_name="dict_ds", sample_rate=8000, length=10000)
     item_padded = padded[0]
     assert item_padded["waveform"].shape == (1, 10000)
     assert item_padded["metadata"]["frame_targets"] == {0: 1.0, 4000: 2.0, 6000: 3.0}
-    assert item_padded["metadata"]["frame_labels"] == {"0": 0, "4000": 1, "6000": 2}
+    assert item_padded["metadata"]["frame_labels"] == {0: 0, 4000: 1, 6000: 2}
 
 
 def test_base_dataset_tensor_metadata():
@@ -389,12 +389,8 @@ def test_base_dataset_tensor_metadata():
 
     ds = TensorFrameDataset()
     wrapped = BaseDataset(ds, dataset_name="tensor_ds", sample_rate=16000, length=400)
-    item = wrapped[0]
-
-    assert item["waveform"].shape == (1, 400)
-    assert isinstance(item["metadata"]["frame_targets"], torch.Tensor)
-    assert item["metadata"]["frame_targets"].shape == (400,)
-    assert item["metadata"]["tokens"] == ["tok"]
+    with pytest.raises(InvalidDatasetError, match="must be a list or dict"):
+        _ = wrapped[0]
 
 
 def test_base_dataset_validation_errors():
@@ -408,6 +404,9 @@ def test_base_dataset_validation_errors():
 
     with pytest.raises(ValueError, match="length must be a positive integer"):
         BaseDataset(ds, dataset_name="ds", sample_rate=16000, length=0)
+
+    with pytest.raises(TypeError, match="normalize must be a boolean"):
+        BaseDataset(ds, dataset_name="ds", sample_rate=16000, normalize="invalid")  # type: ignore
 
     with pytest.raises(InvalidDatasetError, match="must implement __len__"):
         BaseDataset(object(), dataset_name="ds", sample_rate=16000)
@@ -435,27 +434,6 @@ def test_base_dataset_rejects_1d_waveform():
         _ = wrapped[0]
 
 
-def test_base_dataset_rejects_empty_or_unknown_metadata():
-    class BadMetadataDataset(Dataset):
-        def __len__(self):
-            return 1
-
-        def __getitem__(self, idx):
-            return {
-                "waveform": torch.randn(1, 1600),
-                "sample_rate": 16000,
-                "metadata": {"unknown_key": "val"},
-            }
-
-    wrapped = BaseDataset(
-        BadMetadataDataset(), dataset_name="bad_meta", sample_rate=16000
-    )
-    with pytest.raises(
-        InvalidDatasetError, match="Metadata must contain at least one of"
-    ):
-        _ = wrapped[0]
-
-
 def test_base_dataset_task_compatibility():
     from audio_benchmark.dummy import DummyAudioDataset
     from audio_benchmark.regressors.models import LinearBenchmarkRegressor
@@ -473,3 +451,49 @@ def test_base_dataset_task_compatibility():
     batched_audio, metadatas = collate_audio_batch(batch)
     assert batched_audio.shape == (2, 1, 8000)
     assert len(metadatas) == 2
+
+
+def test_base_dataset_normalization():
+    class ArbitraryWaveformDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            # Unnormalized audio with non-zero mean and non-unit variance
+            t = torch.arange(2000, dtype=torch.float32).unsqueeze(0)
+            return {
+                "waveform": t + 150.0,
+                "sample_rate": 16000,
+                "metadata": {"label": idx},
+            }
+
+    raw_ds = ArbitraryWaveformDataset()
+
+    # Default normalize=True
+    wrapped_default = BaseDataset(
+        raw_ds, dataset_name="norm_default", sample_rate=16000
+    )
+    assert wrapped_default.normalize is True
+    item_default = wrapped_default[0]
+    assert torch.isclose(item_default["waveform"].mean(), torch.tensor(0.0), atol=1e-5)
+    assert torch.isclose(item_default["waveform"].std(), torch.tensor(1.0), atol=1e-5)
+
+    # Explicit normalize=True
+    wrapped_true = BaseDataset(
+        raw_ds, dataset_name="norm_true", sample_rate=16000, normalize=True
+    )
+    assert wrapped_true.normalize is True
+    item_true = wrapped_true[0]
+    assert torch.isclose(item_true["waveform"].mean(), torch.tensor(0.0), atol=1e-5)
+    assert torch.isclose(item_true["waveform"].std(), torch.tensor(1.0), atol=1e-5)
+
+    # Explicit normalize=False
+    wrapped_false = BaseDataset(
+        raw_ds, dataset_name="norm_false", sample_rate=16000, normalize=False
+    )
+    assert wrapped_false.normalize is False
+    item_false = wrapped_false[0]
+    assert not torch.isclose(
+        item_false["waveform"].mean(), torch.tensor(0.0), atol=1e-5
+    )
+    assert not torch.isclose(item_false["waveform"].std(), torch.tensor(1.0), atol=1e-5)

@@ -37,9 +37,7 @@ class TIMITSpeechDurationRegressionBenchmark(AudioBenchmark):
         enable_cache: bool = True,
     ) -> None:
         """Initialize TIMITSpeechDurationRegressionBenchmark."""
-        if max_size is not None and (
-            not isinstance(max_size, int) or isinstance(max_size, bool) or max_size <= 0
-        ):
+        if max_size is not None and (not isinstance(max_size, int) or max_size <= 0):
             raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
 
         task = RegressionTask(
@@ -64,12 +62,14 @@ class TIMITSpeechDurationRegressionBenchmark(AudioBenchmark):
             dataset_name="TIMIT train (speech_duration)",
             sample_rate=16000,
             length=48000,
+            normalize=True,
         )
         wrapped_test_ds = BaseDataset(
             dataset=test_ds,
             dataset_name="TIMIT test (speech_duration)",
             sample_rate=16000,
             length=48000,
+            normalize=True,
         )
 
         super().__init__(

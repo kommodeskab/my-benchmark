@@ -1,12 +1,11 @@
 """Tests for utility functions and model training state preservation."""
 
-import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import Dataset
 
 from audio_benchmark.extractor import extract_representations
-from audio_benchmark.utils import resolve_device, to_numpy
+from audio_benchmark.utils import resolve_device
 
 
 class SimpleAudioDataset(Dataset):
@@ -28,24 +27,6 @@ class SimpleAudioModel(nn.Module):
 
     def forward(self, x):
         return self.conv(x).transpose(1, 2)
-
-
-def test_to_numpy():
-    # PyTorch Tensor
-    t = torch.tensor([1.0, 2.0, 3.0])
-    arr = to_numpy(t)
-    assert isinstance(arr, np.ndarray)
-    np.testing.assert_array_equal(arr, np.array([1.0, 2.0, 3.0]))
-
-    # Existing NumPy array
-    arr_in = np.array([4, 5, 6])
-    arr_out = to_numpy(arr_in)
-    assert arr_out is arr_in
-
-    # Python list
-    arr_list = to_numpy([7, 8])
-    assert isinstance(arr_list, np.ndarray)
-    np.testing.assert_array_equal(arr_list, np.array([7, 8]))
 
 
 def test_resolve_device():

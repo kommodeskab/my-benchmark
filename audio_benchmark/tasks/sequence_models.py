@@ -14,15 +14,6 @@ from tqdm import tqdm
 from audio_benchmark.utils import PositionalEncoding, resolve_device
 
 
-def _normalize_representations(
-    X: torch.Tensor | Sequence[torch.Tensor],
-) -> list[torch.Tensor]:
-    """Convert a 3D representation tensor or sequence of 2D tensors to a list of float32 2D tensors."""
-    if isinstance(X, torch.Tensor):
-        return [X[i].to(torch.float32) for i in range(X.shape[0])]
-    return [x.to(torch.float32) for x in X]
-
-
 def _pad_representation_batch(
     reps: Sequence[torch.Tensor],
 ) -> tuple[torch.Tensor, list[int], torch.Tensor]:
@@ -63,14 +54,14 @@ class BaseSequenceProbe(ABC):
     @abstractmethod
     def fit(
         self,
-        X: torch.Tensor | Sequence[torch.Tensor],
+        X: list[torch.Tensor],
         targets: list[list[int]],
         vocab_size: int,
     ) -> BaseSequenceProbe:
         """Fit the probe on representation features X and integer token targets.
 
         Args:
-            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
+            X: List of 2D representation tensors of shape (T'_i, C').
             targets: List of integer target sequences.
             vocab_size: Number of unique vocabulary tokens.
 
@@ -79,11 +70,11 @@ class BaseSequenceProbe(ABC):
         """
 
     @abstractmethod
-    def predict(self, X: torch.Tensor | Sequence[torch.Tensor]) -> list[list[int]]:
+    def predict(self, X: list[torch.Tensor]) -> list[list[int]]:
         """Predict token ID sequences from representation features X.
 
         Args:
-            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
+            X: List of 2D representation tensors of shape (T'_i, C').
 
         Returns:
             list[list[int]]: Decoded token ID sequences per sample.
@@ -181,27 +172,26 @@ class CTCSequenceProbe(BaseSequenceProbe):
 
     def fit(
         self,
-        X: torch.Tensor | Sequence[torch.Tensor],
+        X: list[torch.Tensor],
         targets: list[list[int]],
         vocab_size: int,
     ) -> CTCSequenceProbe:
         """Fit the CTC probe on features X and token targets.
 
         Args:
-            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
+            X: List of 2D representation tensors of shape (T'_i, C').
             targets: List of integer target sequences.
             vocab_size: Number of distinct vocabulary tokens.
 
         Returns:
             CTCSequenceProbe: Fitted probe instance.
         """
-        rep_list = _normalize_representations(X)
-        in_dim = rep_list[0].shape[-1]
+        in_dim = X[0].shape[-1]
         self.model = _TorchCTCProbe(in_dim=in_dim, vocab_size=vocab_size).to(
             self.device
         )
 
-        dataset = _PairDataset(rep_list, targets)
+        dataset = _PairDataset(X, targets)
         loader = DataLoader(
             dataset,
             batch_size=max(1, min(self.batch_size, len(dataset))),
@@ -244,24 +234,23 @@ class CTCSequenceProbe(BaseSequenceProbe):
 
         return self
 
-    def predict(self, X: torch.Tensor | Sequence[torch.Tensor]) -> list[list[int]]:
+    def predict(self, X: list[torch.Tensor]) -> list[list[int]]:
         """Predict token ID sequences from representations X.
 
         Args:
-            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
+            X: List of 2D representation tensors of shape (T'_i, C').
 
         Returns:
             list[list[int]]: Decoded token sequences.
         """
         if self.model is None:
             raise RuntimeError("CTCSequenceProbe has not been fitted yet.")
-        rep_list = _normalize_representations(X)
-        if not rep_list:
+        if not X:
             return []
         results: list[list[int]] = []
         step = max(1, self.batch_size)
-        for start in range(0, len(rep_list), step):
-            batch_slice = rep_list[start : start + step]
+        for start in range(0, len(X), step):
+            batch_slice = X[start : start + step]
             padded_reps, lengths, _ = _pad_representation_batch(batch_slice)
             results.extend(
                 self.model.greedy_decode(padded_reps.to(self.device), lengths=lengths)
@@ -469,22 +458,21 @@ class TransformerDecoderProbe(BaseSequenceProbe):
 
     def fit(
         self,
-        X: torch.Tensor | Sequence[torch.Tensor],
+        X: list[torch.Tensor],
         targets: list[list[int]],
         vocab_size: int,
     ) -> TransformerDecoderProbe:
         """Fit the Transformer Decoder probe on features X and token targets.
 
         Args:
-            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
+            X: List of 2D representation tensors of shape (T'_i, C').
             targets: List of integer target sequences.
             vocab_size: Number of distinct vocabulary tokens.
 
         Returns:
             TransformerDecoderProbe: Fitted probe instance.
         """
-        rep_list = _normalize_representations(X)
-        in_dim = rep_list[0].shape[-1]
+        in_dim = X[0].shape[-1]
         self.model = _TorchTransformerDecoder(
             in_dim=in_dim,
             vocab_size=vocab_size,
@@ -498,7 +486,7 @@ class TransformerDecoderProbe(BaseSequenceProbe):
         max_target_len = max(len(t) for t in targets) if targets else 0
         self.max_gen_len = max_target_len + 15
 
-        dataset = _PairDataset(rep_list, targets)
+        dataset = _PairDataset(X, targets)
         loader = DataLoader(
             dataset,
             batch_size=max(1, min(self.batch_size, len(dataset))),
@@ -560,24 +548,23 @@ class TransformerDecoderProbe(BaseSequenceProbe):
 
         return self
 
-    def predict(self, X: torch.Tensor | Sequence[torch.Tensor]) -> list[list[int]]:
+    def predict(self, X: list[torch.Tensor]) -> list[list[int]]:
         """Predict token ID sequences from representations X.
 
         Args:
-            X: Input representations of shape (N, T', C') or sequence of (T'_i, C') tensors.
+            X: List of 2D representation tensors of shape (T'_i, C').
 
         Returns:
             list[list[int]]: Decoded token sequences.
         """
         if self.model is None:
             raise RuntimeError("TransformerDecoderProbe has not been fitted yet.")
-        rep_list = _normalize_representations(X)
-        if not rep_list:
+        if not X:
             return []
         results: list[list[int]] = []
         step = max(1, self.batch_size)
-        for start in range(0, len(rep_list), step):
-            batch_slice = rep_list[start : start + step]
+        for start in range(0, len(X), step):
+            batch_slice = X[start : start + step]
             padded_reps, _, memory_padding_mask = _pad_representation_batch(batch_slice)
             results.extend(
                 self.model.generate(

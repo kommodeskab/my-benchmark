@@ -37,9 +37,7 @@ class TIMITPhonemeSequenceModelingBenchmark(AudioBenchmark):
         enable_cache: bool = True,
     ) -> None:
         """Initialize TIMITPhonemeSequenceModelingBenchmark."""
-        if max_size is not None and (
-            not isinstance(max_size, int) or isinstance(max_size, bool) or max_size <= 0
-        ):
+        if max_size is not None and (not isinstance(max_size, int) or max_size <= 0):
             raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
 
         task = SequenceModelingTask(
@@ -63,11 +61,13 @@ class TIMITPhonemeSequenceModelingBenchmark(AudioBenchmark):
             dataset=train_ds,
             dataset_name="TIMIT train (phonemes)",
             sample_rate=16000,
+            normalize=True,
         )
         wrapped_test_ds = BaseDataset(
             dataset=test_ds,
             dataset_name="TIMIT test (phonemes)",
             sample_rate=16000,
+            normalize=True,
         )
 
         super().__init__(

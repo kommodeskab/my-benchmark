@@ -60,9 +60,7 @@ class FrameClassificationTask(BaseTask):
                 f"Unknown pooling '{pooling}'. Supported pooling methods: {valid_poolings}"
             )
         if audio_length is not None and (
-            not isinstance(audio_length, int)
-            or isinstance(audio_length, bool)
-            or audio_length <= 0
+            not isinstance(audio_length, int) or audio_length <= 0
         ):
             raise ValueError(
                 f"audio_length must be a positive integer, got {audio_length!r}."
@@ -73,17 +71,7 @@ class FrameClassificationTask(BaseTask):
         self.pooling = pooling
         self.audio_length = audio_length
 
-        if classifier is None:
-            raise TypeError(
-                "classifier must be an instantiated BaseClassifier instance, got None. "
-                "Passing None as a model is not allowed."
-            )
-        elif isinstance(classifier, str):
-            raise TypeError(
-                f"Passing strings as models is not supported (got '{classifier}'). "
-                "Please pass an instantiated BaseClassifier instance."
-            )
-        elif not isinstance(classifier, BaseClassifier):
+        if not isinstance(classifier, BaseClassifier):
             raise TypeError(
                 f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
             )
@@ -136,7 +124,7 @@ class FrameClassificationTask(BaseTask):
         if len(test_representations) == 0:
             raise TaskError("No test representations provided for evaluation.")
 
-        train_aligned: list[np.ndarray] = []
+        train_aligned: list[torch.Tensor] = []
         train_labels_list: list[list[Any]] = []
         for idx, meta in enumerate(train_metadata):
             if self.label_key not in meta:
@@ -156,8 +144,6 @@ class FrameClassificationTask(BaseTask):
                 key_name=self.label_key,
             )
             clip_reps = train_representations[idx]
-            if isinstance(clip_reps, torch.Tensor):
-                clip_reps = clip_reps.detach().cpu().numpy()
             eff_audio_len = (
                 float(audio_len) if audio_len is not None else float(len(timestamps))
             )
@@ -170,7 +156,7 @@ class FrameClassificationTask(BaseTask):
             train_aligned.append(aligned)
             train_labels_list.append(raw_labels)
 
-        test_aligned: list[np.ndarray] = []
+        test_aligned: list[torch.Tensor] = []
         test_labels_list: list[list[Any]] = []
         for idx, meta in enumerate(test_metadata):
             if self.label_key not in meta:
@@ -190,8 +176,6 @@ class FrameClassificationTask(BaseTask):
                 key_name=self.label_key,
             )
             clip_reps = test_representations[idx]
-            if isinstance(clip_reps, torch.Tensor):
-                clip_reps = clip_reps.detach().cpu().numpy()
             eff_audio_len = (
                 float(audio_len) if audio_len is not None else float(len(timestamps))
             )
@@ -204,8 +188,8 @@ class FrameClassificationTask(BaseTask):
             test_aligned.append(aligned)
             test_labels_list.append(raw_labels)
 
-        X_train = np.concatenate(train_aligned, axis=0)
-        X_test = np.concatenate(test_aligned, axis=0)
+        X_train = torch.cat(train_aligned, dim=0)
+        X_test = torch.cat(test_aligned, dim=0)
 
         train_flat = [lbl for sub in train_labels_list for lbl in sub]
         test_flat = [lbl for sub in test_labels_list for lbl in sub]
@@ -220,8 +204,8 @@ class FrameClassificationTask(BaseTask):
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        y_train = encoder.transform(train_flat).astype(np.int64)
-        y_test = encoder.transform(test_flat).astype(np.int64)
+        y_train = torch.as_tensor(encoder.transform(train_flat), dtype=torch.long)
+        y_test = torch.as_tensor(encoder.transform(test_flat), dtype=torch.long)
 
         classifier_inst = self.classifier
         classifier_name = classifier_inst.__class__.__name__
@@ -243,17 +227,14 @@ class FrameClassificationTask(BaseTask):
             "train_accuracy": train_metrics["accuracy"],
             "training_time": training_time,
         }
-        if hasattr(classifier_inst, "best_params") and classifier_inst.best_params:
-            results["best_params"] = classifier_inst.best_params
-        if (
-            hasattr(classifier_inst, "best_score")
-            and classifier_inst.best_score is not None
-        ):
-            results["best_cv_score"] = classifier_inst.best_score
 
         return results
 
-    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
+    def examine_data(
+        self,
+        dataset: Dataset,
+        testset: Dataset | None = None,
+    ) -> dict[str, Any]:
         """Examine the dataset in the context of frame classification.
 
         Validates the datasets, computes clip/frame distributions, class counts,
@@ -266,11 +247,20 @@ class FrameClassificationTask(BaseTask):
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
-        self._validate_for_examination(dataset, [self.label_key])
-        train_metadata = self.extract_metadata(dataset)
-
+        if not isinstance(dataset, Dataset):
+            raise TypeError(
+                f"dataset must be an instance of Dataset, got {type(dataset).__name__}."
+            )
+        if testset is not None and not isinstance(testset, Dataset):
+            raise TypeError(
+                f"testset must be an instance of Dataset, got {type(testset).__name__}."
+            )
+        self.validate_dataset(dataset)
         if testset is not None:
-            self._validate_for_examination(testset, [self.label_key])
+            self.validate_dataset(testset)
+
+        train_metadata = self.extract_metadata(dataset)
+        if testset is not None:
             test_metadata = self.extract_metadata(testset)
         else:
             test_metadata = train_metadata

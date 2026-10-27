@@ -2,7 +2,6 @@
 
 import time
 from collections import Counter
-from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -30,7 +29,7 @@ class GlobalClassificationTask(BaseTask):
         classifier: BaseClassifier,
         name: str = "global_classification",
         label_key: str = "label",
-        pooling: str | Callable[[torch.Tensor], torch.Tensor] = "mean",
+        pooling: str = "mean",
         metric: str = "accuracy",
     ):
         """Initialize the GlobalClassificationTask.
@@ -39,8 +38,7 @@ class GlobalClassificationTask(BaseTask):
             classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
             label_key: Key in the sample metadata dictionary containing the target label.
-            pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last',
-                or a callable f(representations) -> pooled_tensor.
+            pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last'.
             metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
         """
         super().__init__(name=name)
@@ -51,17 +49,7 @@ class GlobalClassificationTask(BaseTask):
             )
         self.metric = metric
         self.label_key = label_key
-        if classifier is None:
-            raise TypeError(
-                "classifier must be an instantiated BaseClassifier instance, got None. "
-                "Passing None as a model is not allowed."
-            )
-        elif isinstance(classifier, str):
-            raise TypeError(
-                f"Passing strings as models is not supported (got '{classifier}'). "
-                "Please pass an instantiated BaseClassifier instance."
-            )
-        elif not isinstance(classifier, BaseClassifier):
+        if not isinstance(classifier, BaseClassifier):
             raise TypeError(
                 f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
             )
@@ -72,7 +60,7 @@ class GlobalClassificationTask(BaseTask):
         """Verify that the dataset metadata contains the expected label_key."""
         validate_dataset(dataset, required_metadata_keys=[self.label_key])
 
-    def pool_representations(self, representations: torch.Tensor) -> np.ndarray:
+    def pool_representations(self, representations: torch.Tensor) -> torch.Tensor:
         """Pool sequence representations (N, T', C') into clip-level features (N, C')."""
         return self.apply_pooling(representations, self.pooling)
 
@@ -125,8 +113,8 @@ class GlobalClassificationTask(BaseTask):
 
         encoder = LabelEncoder()
         encoder.fit(list(raw_train_labels) + list(raw_test_labels))
-        y_train = encoder.transform(raw_train_labels)
-        y_test = encoder.transform(raw_test_labels)
+        y_train = torch.as_tensor(encoder.transform(raw_train_labels), dtype=torch.long)
+        y_test = torch.as_tensor(encoder.transform(raw_test_labels), dtype=torch.long)
         num_classes = len(encoder.classes_)
 
         if num_classes < 2:
@@ -139,13 +127,13 @@ class GlobalClassificationTask(BaseTask):
 
         is_sequence_probe = getattr(classifier_inst, "accepts_sequence", False)
         if is_sequence_probe:
-            X_train = train_representations.detach().cpu().numpy()
-            X_test = test_representations.detach().cpu().numpy()
+            X_train = train_representations
+            X_test = test_representations
             pooling_name = "none (transformer)"
         else:
             X_train = self.pool_representations(train_representations)
             X_test = self.pool_representations(test_representations)
-            pooling_name = self.pooling if isinstance(self.pooling, str) else "custom"
+            pooling_name = self.pooling
 
         start_time = time.perf_counter()
         classifier_inst.fit(X_train, y_train)
@@ -165,17 +153,14 @@ class GlobalClassificationTask(BaseTask):
             "train_accuracy": train_metrics["accuracy"],
             "training_time": training_time,
         }
-        if hasattr(classifier_inst, "best_params") and classifier_inst.best_params:
-            results["best_params"] = classifier_inst.best_params
-        if (
-            hasattr(classifier_inst, "best_score")
-            and classifier_inst.best_score is not None
-        ):
-            results["best_cv_score"] = classifier_inst.best_score
 
         return results
 
-    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
+    def examine_data(
+        self,
+        dataset: Dataset,
+        testset: Dataset | None = None,
+    ) -> dict[str, Any]:
         """Examine the dataset in the context of global classification.
 
         Validates the datasets, checks class distributions across train and test sets,
@@ -188,11 +173,20 @@ class GlobalClassificationTask(BaseTask):
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
-        self._validate_for_examination(dataset, [self.label_key])
-        train_metadata = self.extract_metadata(dataset)
-
+        if not isinstance(dataset, Dataset):
+            raise TypeError(
+                f"dataset must be an instance of Dataset, got {type(dataset).__name__}."
+            )
+        if testset is not None and not isinstance(testset, Dataset):
+            raise TypeError(
+                f"testset must be an instance of Dataset, got {type(testset).__name__}."
+            )
+        self.validate_dataset(dataset)
         if testset is not None:
-            self._validate_for_examination(testset, [self.label_key])
+            self.validate_dataset(testset)
+
+        train_metadata = self.extract_metadata(dataset)
+        if testset is not None:
             test_metadata = self.extract_metadata(testset)
         else:
             test_metadata = train_metadata

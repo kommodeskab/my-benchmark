@@ -105,13 +105,28 @@ class EmptySequenceDataset(Dataset):
         }
 
 
+class SimpleSequenceDataset(Dataset):
+    def __init__(self, samples):
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return {
+            "waveform": torch.randn(1, 100),
+            "sample_rate": 16000,
+            "metadata": self.samples[idx],
+        }
+
+
 def test_invalid_probe_raises():
     with pytest.raises(
-        TypeError, match="probe must be an instance of BaseSequenceProbe"
+        TypeError, match=r"probe must be an instance of BaseSequenceProbe, got str"
     ):
         SequenceModelingTask(probe="ctc")
     with pytest.raises(
-        TypeError, match="Passing None as a sequence probe is not allowed"
+        TypeError, match=r"probe must be an instance of BaseSequenceProbe, got NoneType"
     ):
         SequenceModelingTask(probe=None)
 
@@ -124,7 +139,7 @@ def test_dataset_validation_missing_key():
 
 def test_dataset_validation_non_sequence():
     task = SequenceModelingTask(probe=CTCSequenceProbe(), target_key="tokens")
-    with pytest.raises(InvalidDatasetError, match="must be a sequence"):
+    with pytest.raises(InvalidDatasetError, match="must be a list of tokens"):
         task.validate_dataset(NonSequenceDataset())
 
 
@@ -157,7 +172,9 @@ def test_sequence_modeling_ctc():
     ]
 
     # Test examine_data
-    info = task.examine_data(train_meta, test_meta)
+    info = task.examine_data(
+        SimpleSequenceDataset(train_meta), SimpleSequenceDataset(test_meta)
+    )
     assert info["train_clips"] == 6
     assert info["test_clips"] == 2
     assert info["vocab_size"] == 3

@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+from torch.utils.data import Dataset
 
 from audio_benchmark import (
     AudioBenchmark,
@@ -16,6 +17,21 @@ from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.regression import RegressionTask
 
 
+class SimpleDataset(Dataset):
+    def __init__(self, samples):
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return {
+            "waveform": torch.randn(1, 160),
+            "sample_rate": 16000,
+            "metadata": self.samples[idx],
+        }
+
+
 def test_regression_task_with_different_regressors():
     task_linear = RegressionTask(regressor=LinearBenchmarkRegressor())
     task_knn = RegressionTask(regressor=KNNBenchmarkRegressor())
@@ -28,7 +44,7 @@ def test_regression_task_with_different_regressors():
     test_reps = torch.randn(5, 4, 16)
     test_meta = [{"target": float(i * 1.5 + 2.0)} for i in range(5)]
 
-    info = task_linear.examine_data(train_meta, test_meta)
+    info = task_linear.examine_data(SimpleDataset(train_meta), SimpleDataset(test_meta))
     assert info["train_samples"] == 15
     assert info["test_samples"] == 5
     assert info["baseline_strategy"] == "mean_predictor"
@@ -142,12 +158,18 @@ def test_benchmark_runner_with_regression_task(tmp_path):
 
 
 def test_regression_task_string_regressor_raises():
-    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+    with pytest.raises(
+        TypeError,
+        match=r"regressor must be an instantiated BaseRegressor instance, got str",
+    ):
         RegressionTask(regressor="linear")
 
 
 def test_regression_task_none_or_missing_regressor_raises():
-    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+    with pytest.raises(
+        TypeError,
+        match=r"regressor must be an instantiated BaseRegressor instance, got NoneType",
+    ):
         RegressionTask(regressor=None)
     with pytest.raises(TypeError):
         RegressionTask()

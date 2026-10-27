@@ -37,9 +37,7 @@ class VCTKAgeRegressionBenchmark(AudioBenchmark):
         enable_cache: bool = True,
     ) -> None:
         """Initialize VCTKAgeRegressionBenchmark."""
-        if max_size is not None and (
-            not isinstance(max_size, int) or isinstance(max_size, bool) or max_size <= 0
-        ):
+        if max_size is not None and (not isinstance(max_size, int) or max_size <= 0):
             raise ValueError(f"max_size must be a positive integer, got {max_size!r}")
 
         task = RegressionTask(
@@ -64,12 +62,14 @@ class VCTKAgeRegressionBenchmark(AudioBenchmark):
             dataset_name="VCTK train (age)",
             sample_rate=16000,
             length=48000,
+            normalize=True,
         )
         wrapped_val_ds = BaseDataset(
             dataset=val_ds,
             dataset_name="VCTK val (age)",
             sample_rate=16000,
             length=48000,
+            normalize=True,
         )
 
         super().__init__(

@@ -47,15 +47,9 @@ class SequenceModelingTask(BaseTask):
             metric: Primary metric for the task ('token_error_rate', 'sequence_accuracy').
         """
         super().__init__(name=name)
-        if probe is None:
-            raise TypeError(
-                "Passing None as a sequence probe is not allowed. "
-                "Please provide an explicit BaseSequenceProbe (e.g. CTCSequenceProbe() or TransformerDecoderProbe())."
-            )
         if not isinstance(probe, BaseSequenceProbe):
             raise TypeError(
-                f"probe must be an instance of BaseSequenceProbe, got {type(probe).__name__}. "
-                f"Passing strings as models is not supported."
+                f"probe must be an instance of BaseSequenceProbe, got {type(probe).__name__}."
             )
         valid_metrics = ("token_error_rate", "sequence_accuracy")
         if metric not in valid_metrics:
@@ -76,9 +70,9 @@ class SequenceModelingTask(BaseTask):
 
         parsed = parse_dataset_item(dataset[0])
         seq = parsed["metadata"][self.target_key]
-        if not hasattr(seq, "__len__"):
+        if not isinstance(seq, list):
             raise InvalidDatasetError(
-                f"Metadata key '{self.target_key}' must be a sequence (e.g. list of tokens), "
+                f"Metadata key '{self.target_key}' must be a list of tokens, "
                 f"got {type(seq).__name__}."
             )
         if len(seq) == 0:
@@ -111,11 +105,11 @@ class SequenceModelingTask(BaseTask):
                     f"Train sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
             seq = meta[self.target_key]
-            if not isinstance(seq, (list, tuple)):
+            if not isinstance(seq, list):
                 raise InvalidDatasetError(
-                    f"Target for sample {idx} must be a list or tuple of tokens, got {type(seq).__name__}."
+                    f"Target for sample {idx} must be a list of tokens, got {type(seq).__name__}."
                 )
-            raw_train_targets.append(list(seq))
+            raw_train_targets.append(seq)
 
         raw_test_targets = []
         for idx, meta in enumerate(test_metadata):
@@ -124,11 +118,11 @@ class SequenceModelingTask(BaseTask):
                     f"Test sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
             seq = meta[self.target_key]
-            if not isinstance(seq, (list, tuple)):
+            if not isinstance(seq, list):
                 raise InvalidDatasetError(
-                    f"Target for test sample {idx} must be a list or tuple of tokens, got {type(seq).__name__}."
+                    f"Target for test sample {idx} must be a list of tokens, got {type(seq).__name__}."
                 )
-            raw_test_targets.append(list(seq))
+            raw_test_targets.append(seq)
 
         vocab = Vocabulary(raw_train_targets + raw_test_targets)
         vocab_size = len(vocab)
@@ -141,25 +135,19 @@ class SequenceModelingTask(BaseTask):
             int(meta.get("rep_length", train_representations.shape[1]))
             for meta in train_metadata
         ]
-        if any(length < train_representations.shape[1] for length in train_lengths):
-            train_reps: torch.Tensor | list[torch.Tensor] = [
-                train_representations[i, :length].to(torch.float32)
-                for i, length in enumerate(train_lengths)
-            ]
-        else:
-            train_reps = train_representations.to(torch.float32)
+        train_reps = [
+            train_representations[i, :length].to(torch.float32)
+            for i, length in enumerate(train_lengths)
+        ]
 
         test_lengths = [
             int(meta.get("rep_length", test_representations.shape[1]))
             for meta in test_metadata
         ]
-        if any(length < test_representations.shape[1] for length in test_lengths):
-            test_reps: torch.Tensor | list[torch.Tensor] = [
-                test_representations[i, :length].to(torch.float32)
-                for i, length in enumerate(test_lengths)
-            ]
-        else:
-            test_reps = test_representations.to(torch.float32)
+        test_reps = [
+            test_representations[i, :length].to(torch.float32)
+            for i, length in enumerate(test_lengths)
+        ]
 
         start_time = time.perf_counter()
         self.probe.fit(train_reps, encoded_train_targets, vocab_size=vocab_size)
@@ -181,7 +169,11 @@ class SequenceModelingTask(BaseTask):
             "training_time": training_time,
         }
 
-    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
+    def examine_data(
+        self,
+        dataset: Dataset,
+        testset: Dataset | None = None,
+    ) -> dict[str, Any]:
         """Examine the dataset in the context of sequence modeling.
 
         Args:
@@ -191,11 +183,20 @@ class SequenceModelingTask(BaseTask):
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
-        self._validate_for_examination(dataset, [self.target_key])
-        train_metadata = self.extract_metadata(dataset)
-
+        if not isinstance(dataset, Dataset):
+            raise TypeError(
+                f"dataset must be an instance of Dataset, got {type(dataset).__name__}."
+            )
+        if testset is not None and not isinstance(testset, Dataset):
+            raise TypeError(
+                f"testset must be an instance of Dataset, got {type(testset).__name__}."
+            )
+        self.validate_dataset(dataset)
         if testset is not None:
-            self._validate_for_examination(testset, [self.target_key])
+            self.validate_dataset(testset)
+
+        train_metadata = self.extract_metadata(dataset)
+        if testset is not None:
             test_metadata = self.extract_metadata(testset)
         else:
             test_metadata = train_metadata
@@ -210,7 +211,11 @@ class SequenceModelingTask(BaseTask):
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            seq = list(meta[self.target_key])
+            seq = meta[self.target_key]
+            if not isinstance(seq, list):
+                raise InvalidDatasetError(
+                    f"Target for sample {idx} must be a list of tokens, got {type(seq).__name__}."
+                )
             raw_train_targets.append(seq)
             seq_lengths.append(len(seq))
 
@@ -220,7 +225,11 @@ class SequenceModelingTask(BaseTask):
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            seq = list(meta[self.target_key])
+            seq = meta[self.target_key]
+            if not isinstance(seq, list):
+                raise InvalidDatasetError(
+                    f"Target for test sample {idx} must be a list of tokens, got {type(seq).__name__}."
+                )
             raw_test_targets.append(seq)
             seq_lengths.append(len(seq))
 

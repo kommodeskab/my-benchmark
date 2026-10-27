@@ -33,11 +33,7 @@ def downsample_sequence(
     if orig_len == 0:
         raise ValueError("Cannot downsample an empty sequence.")
 
-    if (
-        not isinstance(target_len, int)
-        or isinstance(target_len, bool)
-        or target_len <= 0
-    ):
+    if not isinstance(target_len, int) or target_len <= 0:
         raise ValueError(f"target_len must be positive integer, got {target_len}.")
 
     if orig_len == target_len:
@@ -73,14 +69,14 @@ def parse_frame_targets(
 ) -> tuple[np.ndarray, list[Any]]:
     """Parse and validate arbitrary-length sequence or dictionary frame targets.
 
-    Supports:
+    Supports strictly:
       1. Mapping/dictionary ({timestamp: target}) where timestamps are integer
-         or stringified-integer sample indices in [0, audio_length).
-      2. 1D sequence or tensor of arbitrary length K >= 1, centered at
+         sample indices in [0, audio_length).
+      2. 1D list of arbitrary length K >= 1, centered at
          (i + 0.5) * audio_length / K for i in {0, ..., K-1}.
 
     Args:
-        raw_target: Raw target object from sample metadata.
+        raw_target: Raw target object from sample metadata (list or dict[int, Any]).
         audio_length: Total audio duration in samples. Required for validating
             dictionary timestamp bounds when provided.
         key_name: Metadata key identifier used in error messages.
@@ -91,6 +87,7 @@ def parse_frame_targets(
 
     Raises:
         InvalidDatasetError: If raw_target format, shape, key types, or timestamps are invalid.
+        ValueError: If audio_length is not a positive number.
     """
     from audio_benchmark.exceptions import InvalidDatasetError
 
@@ -100,9 +97,7 @@ def parse_frame_targets(
                 f"Target dictionary in '{key_name}' must not be empty (K >= 1)."
             )
         if audio_length is not None and (
-            isinstance(audio_length, bool)
-            or not isinstance(audio_length, (int, float))
-            or audio_length <= 0
+            not isinstance(audio_length, (int, float)) or audio_length <= 0
         ):
             raise ValueError(
                 f"audio_length must be a positive number, got {audio_length!r}."
@@ -110,27 +105,11 @@ def parse_frame_targets(
         parsed_items: list[tuple[int, Any]] = []
         seen_timestamps: set[int] = set()
         for k, v in raw_target.items():
-            if isinstance(k, bool):
+            if not isinstance(k, int):
                 raise InvalidDatasetError(
-                    f"Timestamp key in '{key_name}' must be an integer, got bool: {k!r}."
+                    f"Timestamp key {k!r} in '{key_name}' must be an integer, got {type(k).__name__}."
                 )
-            if isinstance(k, int):
-                ts = k
-            elif isinstance(k, str):
-                cleaned = k.strip()
-                try:
-                    ts = int(cleaned)
-                    if str(ts) != cleaned:
-                        raise ValueError
-                except (ValueError, TypeError) as e:
-                    raise InvalidDatasetError(
-                        f"Timestamp key {k!r} in '{key_name}' is not a valid integer sample index."
-                    ) from e
-            else:
-                raise InvalidDatasetError(
-                    f"Timestamp key {k!r} in '{key_name}' must be an integer or stringified integer, got {type(k).__name__}."
-                )
-
+            ts = k
             if ts < 0:
                 raise InvalidDatasetError(
                     f"Timestamp key {ts} in '{key_name}' must be non-negative, got {ts}."
@@ -151,56 +130,39 @@ def parse_frame_targets(
         targets = [item[1] for item in sorted_items]
         return timestamps, targets
 
-    if isinstance(raw_target, (str, bytes, bytearray)):
-        raise InvalidDatasetError(
-            f"Metadata key '{key_name}' cannot be a string or bytes, got {type(raw_target).__name__}."
-        )
-
-    if isinstance(raw_target, (torch.Tensor, np.ndarray)):
-        if raw_target.ndim != 1:
+    elif isinstance(raw_target, list):
+        targets = raw_target
+        k_count = len(targets)
+        if k_count == 0:
             raise InvalidDatasetError(
-                f"Target sequence in '{key_name}' must be 1D, got ndim={raw_target.ndim} with shape {tuple(raw_target.shape)}."
+                f"Target sequence in '{key_name}' must not be empty (K >= 1)."
             )
-        targets = (
-            raw_target.detach().cpu().tolist()
-            if isinstance(raw_target, torch.Tensor)
-            else raw_target.tolist()
+        if audio_length is not None and (
+            not isinstance(audio_length, (int, float)) or audio_length <= 0
+        ):
+            raise ValueError(
+                f"audio_length must be a positive number, got {audio_length!r}."
+            )
+        eff_audio_len = (
+            float(audio_length) if audio_length is not None else float(k_count)
         )
-    elif isinstance(raw_target, (list, tuple)):
-        targets = list(raw_target)
+        timestamps = (np.arange(k_count, dtype=np.float64) + 0.5) * (
+            eff_audio_len / float(k_count)
+        )
+        return timestamps, targets
+
     else:
         raise InvalidDatasetError(
-            f"Metadata key '{key_name}' must be a dictionary or 1D sequence, got {type(raw_target).__name__}."
+            f"Metadata key '{key_name}' must be a list or dict[int, Any], got {type(raw_target).__name__}."
         )
-
-    k_count = len(targets)
-    if k_count == 0:
-        raise InvalidDatasetError(
-            f"Target sequence in '{key_name}' must not be empty (K >= 1)."
-        )
-
-    if audio_length is not None and (
-        isinstance(audio_length, bool)
-        or not isinstance(audio_length, (int, float))
-        or audio_length <= 0
-    ):
-        raise ValueError(
-            f"audio_length must be a positive number, got {audio_length!r}."
-        )
-
-    eff_audio_len = float(audio_length) if audio_length is not None else float(k_count)
-    timestamps = (np.arange(k_count, dtype=np.float64) + 0.5) * (
-        eff_audio_len / float(k_count)
-    )
-    return timestamps, targets
 
 
 def align_features_to_targets(
-    representations: np.ndarray | torch.Tensor,
-    target_timestamps: np.ndarray | Sequence[float],
+    representations: torch.Tensor,
+    target_timestamps: np.ndarray | Sequence[float] | torch.Tensor,
     audio_length: float,
     pooling: str = "mean",
-) -> np.ndarray:
+) -> torch.Tensor:
     """Align temporal representation features to target timestamps.
 
     When representation length T' >= target count K (downsampling or 1-to-1),
@@ -213,15 +175,16 @@ def align_features_to_targets(
     assigned the single representation feature closest to it in time.
 
     Args:
-        representations: Feature array of shape (T', C) or torch.Tensor.
-        target_timestamps: 1D array or sequence of target timestamps in sample indices.
+        representations: 2D feature tensor of shape (T', C).
+        target_timestamps: 1D array, sequence, or tensor of target timestamps in sample indices.
         audio_length: Total audio duration in sample indices (T > 0).
         pooling: Pooling strategy when T' >= K ('mean', 'max', 'min', 'median').
 
     Returns:
-        np.ndarray: Aligned feature array of shape (K, C).
+        torch.Tensor: Aligned 2D feature tensor of shape (K, C).
 
     Raises:
+        TypeError: If representations is not a torch.Tensor.
         ValueError: If representations is not 2D, target_timestamps is empty or out of bounds,
             audio_length is not positive, or pooling method is unsupported.
     """
@@ -231,70 +194,73 @@ def align_features_to_targets(
             f"Unknown pooling '{pooling}'. Supported pooling methods: {valid_poolings}"
         )
 
-    if (
-        isinstance(audio_length, bool)
-        or not isinstance(audio_length, (int, float))
-        or audio_length <= 0
-    ):
+    if not isinstance(audio_length, (int, float)) or audio_length <= 0:
         raise ValueError(f"audio_length must be positive, got {audio_length}.")
 
-    if isinstance(representations, torch.Tensor):
-        reps = representations.detach().cpu().numpy()
-    else:
-        reps = np.asarray(representations)
-
-    if reps.ndim != 2:
-        raise ValueError(
-            f"representations must have shape (T', C) with ndim=2, got shape {reps.shape}."
+    if not isinstance(representations, torch.Tensor):
+        raise TypeError(
+            f"representations must be a torch.Tensor, got {type(representations).__name__}."
         )
 
-    t_prime, feature_dim = reps.shape
+    if representations.ndim != 2:
+        raise ValueError(
+            f"representations must have shape (T', C) with ndim=2, got shape {tuple(representations.shape)}."
+        )
+
+    t_prime, feature_dim = representations.shape
     if t_prime == 0:
         raise ValueError("representations cannot have temporal length 0.")
 
-    target_ts = np.asarray(target_timestamps, dtype=np.float64)
+    target_ts = torch.as_tensor(
+        target_timestamps, dtype=torch.float32, device=representations.device
+    )
     if target_ts.ndim != 1 or len(target_ts) == 0:
         raise ValueError(
-            f"target_timestamps must be a non-empty 1D array, got shape {target_ts.shape}."
+            f"target_timestamps must be a non-empty 1D array, got shape {tuple(target_ts.shape)}."
         )
 
-    if np.any(target_ts < 0) or np.any(target_ts >= audio_length):
+    if (target_ts < 0).any() or (target_ts >= audio_length).any():
         raise ValueError(
             f"All target timestamps must be within [0, audio_length) ([0, {audio_length}))."
         )
 
     k_count = len(target_ts)
-
-    rep_ts = (np.arange(t_prime, dtype=np.float64) + 0.5) * (
-        float(audio_length) / float(t_prime)
-    )
+    rep_ts = (
+        torch.arange(t_prime, dtype=torch.float32, device=representations.device) + 0.5
+    ) * (float(audio_length) / float(t_prime))
 
     if t_prime >= k_count:
-        dist = np.abs(rep_ts[:, None] - target_ts[None, :])
-        nearest_targets = np.argmin(dist, axis=1)
+        dist = torch.abs(rep_ts[:, None] - target_ts[None, :])
+        nearest_targets = torch.argmin(dist, dim=1)
 
         assigned: list[list[int]] = [[] for _ in range(k_count)]
         for j, target_idx in enumerate(nearest_targets):
-            assigned[target_idx].append(j)
+            assigned[target_idx.item()].append(j)
 
-        aligned = np.empty((k_count, feature_dim), dtype=reps.dtype)
+        aligned = torch.empty(
+            (k_count, feature_dim),
+            dtype=representations.dtype,
+            device=representations.device,
+        )
         for i in range(k_count):
             if assigned[i]:
-                sub = reps[assigned[i]]
+                sub = representations[assigned[i]]
                 if pooling == "mean":
-                    aligned[i] = np.mean(sub, axis=0)
+                    aligned[i] = sub.mean(dim=0)
                 elif pooling == "max":
-                    aligned[i] = np.max(sub, axis=0)
+                    aligned[i] = sub.amax(dim=0)
                 elif pooling == "min":
-                    aligned[i] = np.min(sub, axis=0)
+                    aligned[i] = sub.amin(dim=0)
                 elif pooling == "median":
-                    aligned[i] = np.median(sub, axis=0)
+                    aligned[i] = torch.quantile(sub.float(), 0.5, dim=0).to(
+                        dtype=representations.dtype
+                    )
             else:
-                rep_dist = np.abs(target_ts[i] - rep_ts)
-                nearest_rep = int(np.argmin(rep_dist))
-                aligned[i] = reps[nearest_rep]
+                rep_dist = torch.abs(target_ts[i] - rep_ts)
+                nearest_rep = int(torch.argmin(rep_dist).item())
+                aligned[i] = representations[nearest_rep]
         return aligned
 
-    dist = np.abs(target_ts[:, None] - rep_ts[None, :])
-    nearest_reps = np.argmin(dist, axis=1)
-    return reps[nearest_reps]
+    dist = torch.abs(target_ts[:, None] - rep_ts[None, :])
+    nearest_reps = torch.argmin(dist, dim=1)
+    return representations[nearest_reps]

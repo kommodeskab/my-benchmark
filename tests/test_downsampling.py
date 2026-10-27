@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from audio_benchmark.tasks.downsampling import downsample_sequence
 
@@ -49,14 +50,14 @@ def test_align_features_downsampling_pooling_modes():
     # Rep frames 2 and 3 (62.5, 87.5) map to target 1 (75.0).
     from audio_benchmark.tasks.downsampling import align_features_to_targets
 
-    reps = np.array(
+    reps = torch.tensor(
         [
             [1.0, 10.0],
             [3.0, 20.0],
             [5.0, 30.0],
             [9.0, 50.0],
         ],
-        dtype=np.float32,
+        dtype=torch.float32,
     )
     target_ts = np.array([25.0, 75.0], dtype=np.float64)
 
@@ -64,30 +65,34 @@ def test_align_features_downsampling_pooling_modes():
     mean_aligned = align_features_to_targets(
         reps, target_ts, audio_length=100, pooling="mean"
     )
+    assert isinstance(mean_aligned, torch.Tensor)
     assert mean_aligned.shape == (2, 2)
-    assert np.allclose(mean_aligned[0], [2.0, 15.0])
-    assert np.allclose(mean_aligned[1], [7.0, 40.0])
+    assert torch.allclose(mean_aligned[0], torch.tensor([2.0, 15.0]))
+    assert torch.allclose(mean_aligned[1], torch.tensor([7.0, 40.0]))
 
     # Test "max" pooling
     max_aligned = align_features_to_targets(
         reps, target_ts, audio_length=100, pooling="max"
     )
-    assert np.allclose(max_aligned[0], [3.0, 20.0])
-    assert np.allclose(max_aligned[1], [9.0, 50.0])
+    assert isinstance(max_aligned, torch.Tensor)
+    assert torch.allclose(max_aligned[0], torch.tensor([3.0, 20.0]))
+    assert torch.allclose(max_aligned[1], torch.tensor([9.0, 50.0]))
 
     # Test "min" pooling
     min_aligned = align_features_to_targets(
         reps, target_ts, audio_length=100, pooling="min"
     )
-    assert np.allclose(min_aligned[0], [1.0, 10.0])
-    assert np.allclose(min_aligned[1], [5.0, 30.0])
+    assert isinstance(min_aligned, torch.Tensor)
+    assert torch.allclose(min_aligned[0], torch.tensor([1.0, 10.0]))
+    assert torch.allclose(min_aligned[1], torch.tensor([5.0, 30.0]))
 
     # Test "median" pooling
     median_aligned = align_features_to_targets(
         reps, target_ts, audio_length=100, pooling="median"
     )
-    assert np.allclose(median_aligned[0], [2.0, 15.0])
-    assert np.allclose(median_aligned[1], [7.0, 40.0])
+    assert isinstance(median_aligned, torch.Tensor)
+    assert torch.allclose(median_aligned[0], torch.tensor([2.0, 15.0]))
+    assert torch.allclose(median_aligned[1], torch.tensor([7.0, 40.0]))
 
 
 def test_align_features_upsampling_repetition():
@@ -96,15 +101,16 @@ def test_align_features_upsampling_repetition():
     # Targets 0, 1 map to rep 0; targets 2, 3 map to rep 1.
     from audio_benchmark.tasks.downsampling import align_features_to_targets
 
-    reps = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32)
+    reps = torch.tensor([[10.0, 20.0], [30.0, 40.0]], dtype=torch.float32)
     target_ts = np.array([12.5, 37.5, 62.5, 87.5], dtype=np.float64)
 
     aligned = align_features_to_targets(reps, target_ts, audio_length=100)
+    assert isinstance(aligned, torch.Tensor)
     assert aligned.shape == (4, 2)
-    assert np.allclose(aligned[0], [10.0, 20.0])
-    assert np.allclose(aligned[1], [10.0, 20.0])
-    assert np.allclose(aligned[2], [30.0, 40.0])
-    assert np.allclose(aligned[3], [30.0, 40.0])
+    assert torch.allclose(aligned[0], torch.tensor([10.0, 20.0]))
+    assert torch.allclose(aligned[1], torch.tensor([10.0, 20.0]))
+    assert torch.allclose(aligned[2], torch.tensor([30.0, 40.0]))
+    assert torch.allclose(aligned[3], torch.tensor([30.0, 40.0]))
 
 
 def test_align_features_zero_assigned_target_fallback():
@@ -118,29 +124,33 @@ def test_align_features_zero_assigned_target_fallback():
     # Nearest rep frame in time to target 1 is rep 2 (62.5, dist 12.4 vs rep 1 dist 12.6).
     from audio_benchmark.tasks.downsampling import align_features_to_targets
 
-    reps = np.array(
+    reps = torch.tensor(
         [[1.0], [2.0], [10.0], [20.0]],
-        dtype=np.float32,
+        dtype=torch.float32,
     )
     target_ts = np.array([50.0, 50.1, 50.2], dtype=np.float64)
 
     aligned = align_features_to_targets(
         reps, target_ts, audio_length=100, pooling="mean"
     )
+    assert isinstance(aligned, torch.Tensor)
     assert aligned.shape == (3, 1)
     # Target 0 pools rep 0 and 1: mean(1.0, 2.0) = 1.5
-    assert np.allclose(aligned[0], [1.5])
+    assert torch.allclose(aligned[0], torch.tensor([1.5]))
     # Target 1 falls back to single nearest rep feature: rep 2 (10.0)
-    assert np.allclose(aligned[1], [10.0])
+    assert torch.allclose(aligned[1], torch.tensor([10.0]))
     # Target 2 pools rep 2 and 3: mean(10.0, 20.0) = 15.0
-    assert np.allclose(aligned[2], [15.0])
+    assert torch.allclose(aligned[2], torch.tensor([15.0]))
 
 
 def test_align_features_validation():
     from audio_benchmark.tasks.downsampling import align_features_to_targets
 
-    reps = np.ones((4, 8), dtype=np.float32)
+    reps = torch.ones((4, 8), dtype=torch.float32)
     target_ts = np.array([10.0, 20.0])
+
+    with pytest.raises(TypeError, match="must be a torch.Tensor"):
+        align_features_to_targets(np.ones((4, 8)), target_ts, audio_length=100)
 
     with pytest.raises(ValueError, match="Unknown pooling"):
         align_features_to_targets(reps, target_ts, audio_length=100, pooling="invalid")
@@ -149,7 +159,7 @@ def test_align_features_validation():
         align_features_to_targets(reps, target_ts, audio_length=0)
 
     with pytest.raises(ValueError, match="representations must have shape"):
-        align_features_to_targets(np.ones(4), target_ts, audio_length=100)
+        align_features_to_targets(torch.ones(4), target_ts, audio_length=100)
 
 
 def test_parse_frame_targets_dictionary_and_sequence():
@@ -162,9 +172,9 @@ def test_parse_frame_targets_dictionary_and_sequence():
     assert np.allclose(ts, [50.0, 150.0, 250.0])
     assert vals == [10, 20, 30]
 
-    # Dictionary targets with string and int keys
+    # Dictionary targets with int keys
     ts_dict, vals_dict = parse_frame_targets(
-        {"100": 1.0, 50: 0.5}, audio_length=200, key_name="frame_targets"
+        {100: 1.0, 50: 0.5}, audio_length=200, key_name="frame_targets"
     )
     # Sorted by timestamp: 50 then 100
     assert list(ts_dict) == [50.0, 100.0]
@@ -181,7 +191,7 @@ def test_parse_frame_targets_dictionary_and_sequence():
         parse_frame_targets({100: 1.0}, audio_length=100)
 
     with pytest.raises(InvalidDatasetError, match="must be an integer"):
-        parse_frame_targets({True: 1.0}, audio_length=100)
+        parse_frame_targets({"100": 1.0}, audio_length=100)
 
-    with pytest.raises(InvalidDatasetError, match="not a valid integer"):
+    with pytest.raises(InvalidDatasetError, match="must be an integer"):
         parse_frame_targets({"invalid_int": 1.0}, audio_length=100)

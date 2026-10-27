@@ -83,6 +83,8 @@ class TestSpeechCommandsClassificationBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length == 16000
         assert benchmark.dataset[0]["waveform"].shape == (1, 16000)
@@ -138,6 +140,8 @@ class TestCREMADClassificationBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length == 48000
         assert benchmark.dataset[0]["waveform"].shape == (1, 48000)
@@ -193,6 +197,8 @@ class TestTIMITSpeechDurationRegressionBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length == 48000
         assert benchmark.dataset[0]["waveform"].shape == (1, 48000)
@@ -249,6 +255,8 @@ class TestVCTKGenderClassificationBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length == 48000
         assert benchmark.dataset[0]["waveform"].shape == (1, 48000)
@@ -306,6 +314,8 @@ class TestVCTKAgeRegressionBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length == 48000
         assert benchmark.dataset[0]["waveform"].shape == (1, 48000)
@@ -362,6 +372,8 @@ class TestTIMITPhonemeSequenceModelingBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length is None
         assert benchmark.dataset[0]["waveform"].shape == (1, 16000)
@@ -420,6 +432,8 @@ class TestTIMITTextSequenceModelingBenchmark:
 
         assert isinstance(benchmark.dataset, BaseDataset)
         assert isinstance(benchmark.testset, BaseDataset)
+        assert benchmark.dataset.normalize is True
+        assert benchmark.testset.normalize is True
         assert benchmark.dataset.sample_rate == 16000
         assert benchmark.dataset.length is None
         assert benchmark.dataset[0]["waveform"].shape == (1, 16000)

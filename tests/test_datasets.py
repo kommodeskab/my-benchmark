@@ -228,7 +228,14 @@ def _create_mock_hf_vctk_dataset(size: int = 4):
         samples.append(
             {
                 "flac": {
-                    "array": [0.01 * (i + 1), 0.02 * (i + 1), 0.03 * (i + 1)],
+                    "array": [
+                        0.01 * (i + 1),
+                        0.02 * (i + 1),
+                        0.03 * (i + 1),
+                        0.04 * (i + 1),
+                        0.05 * (i + 1),
+                        0.06 * (i + 1),
+                    ],
                     "sampling_rate": 48000,
                 },
                 "accent": "English",
@@ -274,7 +281,7 @@ class TestVCTKDataset:
 
         sample = train_ds[0]
         parsed = parse_dataset_item(sample)
-        assert parsed["waveform"].shape == (1, 3)
+        assert parsed["waveform"].shape == (1, 6)
         assert parsed["sample_rate"] == 48000
 
         meta = parsed["metadata"]

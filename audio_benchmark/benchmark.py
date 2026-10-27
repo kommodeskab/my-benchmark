@@ -33,30 +33,6 @@ class BenchmarkResult:
     cached: bool
     representations_shape: tuple[int, ...]
 
-    def __post_init__(self) -> None:
-        """Ensure that metrics always has a 'value' key representing the main result."""
-        if not isinstance(self.metrics, dict):
-            return
-
-        if "value" not in self.metrics:
-            # Fallback detection for standard primary metric keys
-            for candidate in (
-                "accuracy",
-                "r2",
-                "token_error_rate",
-                "mse",
-                "mae",
-                "score",
-            ):
-                if candidate in self.metrics:
-                    self.metrics["value"] = self.metrics[candidate]
-                    break
-            else:
-                for v in self.metrics.values():
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
-                        self.metrics["value"] = v
-                        break
-
     @property
     def value(self) -> Any:
         """Primary result metric value for the benchmark task."""

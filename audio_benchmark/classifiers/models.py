@@ -13,7 +13,6 @@ from torch import nn
 from audio_benchmark.utils import (
     PositionalEncoding,
     resolve_device,
-    to_numpy,
     train_torch_model,
 )
 
@@ -22,9 +21,7 @@ class BaseClassifier(ABC):
     """Abstract base class for downstream benchmark classifiers."""
 
     @abstractmethod
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "BaseClassifier":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "BaseClassifier":
         """Train the classifier on representation features X and labels y.
 
         Args:
@@ -36,19 +33,17 @@ class BaseClassifier(ABC):
         """
 
     @abstractmethod
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict class labels for features X.
 
         Args:
             X: Input feature representations of shape (N, C) or (N, T', C').
 
         Returns:
-            np.ndarray: Predicted class labels of shape (N,).
+            torch.Tensor: Predicted class labels of shape (N,).
         """
 
-    def evaluate(
-        self, X_test: np.ndarray | torch.Tensor, y_test: np.ndarray | torch.Tensor
-    ) -> dict[str, float]:
+    def evaluate(self, X_test: torch.Tensor, y_test: torch.Tensor) -> dict[str, float]:
         """Evaluate predictions against ground truth labels.
 
         Args:
@@ -58,8 +53,8 @@ class BaseClassifier(ABC):
         Returns:
             dict[str, float]: Dictionary containing 'accuracy', 'macro_f1', and 'micro_f1'.
         """
-        y_test_np = to_numpy(y_test)
-        y_pred = self.predict(X_test)
+        y_test_np = y_test.detach().cpu().numpy()
+        y_pred = self.predict(X_test).detach().cpu().numpy()
 
         acc = float(accuracy_score(y_test_np, y_pred))
         macro_f1 = float(f1_score(y_test_np, y_pred, average="macro", zero_division=0))
@@ -80,7 +75,6 @@ class LinearBenchmarkClassifier(BaseClassifier):
         max_iter: Maximum number of solver iterations.
         random_state: Seed used by the random number generator.
         model_type: Linear model variant: 'logistic' (default) or 'ridge'.
-        alpha: Regularization strength for Ridge. If set, forces model_type='ridge'.
         normalize_features: Whether to standardize input features to zero mean and unit variance.
     """
 
@@ -90,21 +84,18 @@ class LinearBenchmarkClassifier(BaseClassifier):
         max_iter: int = 1000,
         random_state: int | None = 42,
         model_type: str = "logistic",
-        alpha: float | None = None,
         normalize_features: bool = True,
     ):
         self.C = C
         self.max_iter = max_iter
         self.random_state = random_state
-        self.alpha = alpha
         self.normalize_features = normalize_features
         self.scaler: StandardScaler | None = None
 
         norm_type = str(model_type).lower().strip()
-        if alpha is not None or norm_type == "ridge":
+        if norm_type == "ridge":
             self.model_type = "ridge"
-            ridge_alpha = alpha if alpha is not None else 1.0
-            self.model = RidgeClassifier(alpha=ridge_alpha, random_state=random_state)
+            self.model = RidgeClassifier(random_state=random_state)
         elif norm_type == "logistic":
             self.model_type = "logistic"
             self.model = LogisticRegression(
@@ -115,9 +106,7 @@ class LinearBenchmarkClassifier(BaseClassifier):
                 f"Unknown model_type: '{model_type}'. Supported: 'logistic', 'ridge'."
             )
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "LinearBenchmarkClassifier":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "LinearBenchmarkClassifier":
         """Fit the linear classifier on features X and labels y.
 
         Args:
@@ -127,8 +116,8 @@ class LinearBenchmarkClassifier(BaseClassifier):
         Returns:
             LinearBenchmarkClassifier: Fitted classifier instance.
         """
-        X_np = to_numpy(X)
-        y_np = to_numpy(y).ravel()
+        X_np = X.detach().cpu().numpy()
+        y_np = y.detach().cpu().numpy().ravel()
         if self.normalize_features:
             self.scaler = StandardScaler()
             X_np = self.scaler.fit_transform(X_np).astype(np.float32)
@@ -137,34 +126,34 @@ class LinearBenchmarkClassifier(BaseClassifier):
         self.model.fit(X_np, y_np)
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict class labels for features X.
 
         Args:
             X: Input feature matrix of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted class labels of shape (N,).
+            torch.Tensor: Predicted class labels of shape (N,).
         """
-        X_np = to_numpy(X)
+        X_np = X.detach().cpu().numpy()
         if self.scaler is not None:
             X_np = self.scaler.transform(X_np).astype(np.float32)
-        return self.model.predict(X_np)
+        return torch.as_tensor(self.model.predict(X_np))
 
-    def predict_proba(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
         """Predict class probabilities for features X (when supported, e.g. LogisticRegression).
 
         Args:
             X: Input feature matrix of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted class probabilities of shape (N, num_classes).
+            torch.Tensor: Predicted class probabilities of shape (N, num_classes).
         """
         if hasattr(self.model, "predict_proba"):
-            X_np = to_numpy(X)
+            X_np = X.detach().cpu().numpy()
             if self.scaler is not None:
                 X_np = self.scaler.transform(X_np).astype(np.float32)
-            return self.model.predict_proba(X_np)
+            return torch.as_tensor(self.model.predict_proba(X_np))
         raise AttributeError(
             f"{self.model.__class__.__name__} does not support predict_proba."
         )
@@ -196,9 +185,7 @@ class KNNBenchmarkClassifier(BaseClassifier):
             n_neighbors=n_neighbors, metric=metric, weights=weights
         )
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "KNNBenchmarkClassifier":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "KNNBenchmarkClassifier":
         """Fit the KNN classifier on features X and labels y.
 
         Args:
@@ -208,8 +195,8 @@ class KNNBenchmarkClassifier(BaseClassifier):
         Returns:
             KNNBenchmarkClassifier: Fitted classifier instance.
         """
-        X_np = to_numpy(X)
-        y_np = to_numpy(y)
+        X_np = X.detach().cpu().numpy()
+        y_np = y.detach().cpu().numpy()
         if self.normalize_features:
             self.scaler = StandardScaler()
             X_np = self.scaler.fit_transform(X_np).astype(np.float32)
@@ -224,19 +211,19 @@ class KNNBenchmarkClassifier(BaseClassifier):
         self.model.fit(X_np, y_np)
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict class labels for features X.
 
         Args:
             X: Input feature matrix of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted class labels of shape (N,).
+            torch.Tensor: Predicted class labels of shape (N,).
         """
-        X_np = to_numpy(X)
+        X_np = X.detach().cpu().numpy()
         if self.scaler is not None:
             X_np = self.scaler.transform(X_np).astype(np.float32)
-        return self.model.predict(X_np)
+        return torch.as_tensor(self.model.predict(X_np))
 
 
 class _TorchMLP(nn.Module):
@@ -329,9 +316,7 @@ class MLPBenchmarkClassifier(BaseClassifier):
         self.model: _TorchMLP | None = None
         self.device = resolve_device(device)
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "MLPBenchmarkClassifier":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "MLPBenchmarkClassifier":
         """Train the MLP classifier on features X and labels y.
 
         Args:
@@ -341,15 +326,17 @@ class MLPBenchmarkClassifier(BaseClassifier):
         Returns:
             MLPBenchmarkClassifier: Fitted classifier instance.
         """
-        X_np = to_numpy(X)
         if self.normalize_features:
             self.scaler = StandardScaler()
-            X_np = self.scaler.fit_transform(X_np).astype(np.float32)
+            X_np = self.scaler.fit_transform(X.detach().cpu().numpy()).astype(
+                np.float32
+            )
+            X_t = torch.as_tensor(X_np, dtype=torch.float32)
         else:
             self.scaler = None
+            X_t = X.detach().to(dtype=torch.float32)
 
-        X_t = torch.as_tensor(X_np, dtype=torch.float32)
-        y_t = torch.as_tensor(to_numpy(y), dtype=torch.long)
+        y_t = y.detach().to(dtype=torch.long)
 
         in_dim = X_t.shape[1]
         num_classes = int(y_t.max().item()) + 1
@@ -377,27 +364,28 @@ class MLPBenchmarkClassifier(BaseClassifier):
         )
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict class labels for features X.
 
         Args:
             X: Input feature representations of shape (N, C).
 
         Returns:
-            np.ndarray: Predicted class labels of shape (N,).
+            torch.Tensor: Predicted class labels of shape (N,).
         """
         if self.model is None:
             raise RuntimeError("Classifier has not been fitted yet.")
 
-        X_np = to_numpy(X)
         if self.scaler is not None:
-            X_np = self.scaler.transform(X_np).astype(np.float32)
+            X_np = self.scaler.transform(X.detach().cpu().numpy()).astype(np.float32)
+            X_t = torch.as_tensor(X_np, dtype=torch.float32).to(self.device)
+        else:
+            X_t = X.detach().to(device=self.device, dtype=torch.float32)
 
         self.model.eval()
-        X_t = torch.as_tensor(X_np, dtype=torch.float32).to(self.device)
         with torch.inference_mode():
             logits = self.model(X_t)
-            preds = logits.argmax(dim=-1).cpu().numpy()
+            preds = logits.argmax(dim=-1).cpu()
         return preds
 
 
@@ -535,9 +523,7 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         self.model: _TorchTransformerClassifier | None = None
         self.device = resolve_device(device)
 
-    def fit(
-        self, X: np.ndarray | torch.Tensor, y: np.ndarray | torch.Tensor
-    ) -> "TransformerBenchmarkClassifier":
+    def fit(self, X: torch.Tensor, y: torch.Tensor) -> "TransformerBenchmarkClassifier":
         """Train the transformer classifier on representation sequences X and labels y.
 
         Args:
@@ -547,21 +533,22 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         Returns:
             TransformerBenchmarkClassifier: Fitted classifier instance.
         """
-        X_np = to_numpy(X)
         if self.normalize_features:
             self.scaler = StandardScaler()
+            X_np = X.detach().cpu().numpy()
             orig_shape = X_np.shape
             X_flat = X_np.reshape(-1, orig_shape[-1])
             X_np = (
                 self.scaler.fit_transform(X_flat).astype(np.float32).reshape(orig_shape)
             )
+            X_t = torch.as_tensor(X_np, dtype=torch.float32)
         else:
             self.scaler = None
+            X_t = X.detach().to(dtype=torch.float32)
 
-        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
-        y_t = torch.as_tensor(to_numpy(y), dtype=torch.long)
+        y_t = y.detach().to(dtype=torch.long)
 
         in_dim = X_t.shape[-1]
         num_classes = int(y_t.max().item()) + 1
@@ -592,31 +579,33 @@ class TransformerBenchmarkClassifier(BaseClassifier):
         )
         return self
 
-    def predict(self, X: np.ndarray | torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor) -> torch.Tensor:
         """Predict class labels for representations X.
 
         Args:
             X: Input sequence representations of shape (N, T', C') or (N, C').
 
         Returns:
-            np.ndarray: Predicted class labels of shape (N,).
+            torch.Tensor: Predicted class labels of shape (N,).
         """
         if self.model is None:
             raise RuntimeError("Classifier has not been fitted yet.")
 
-        X_np = to_numpy(X)
         if self.scaler is not None:
+            X_np = X.detach().cpu().numpy()
             orig_shape = X_np.shape
             X_flat = X_np.reshape(-1, orig_shape[-1])
             X_np = self.scaler.transform(X_flat).astype(np.float32).reshape(orig_shape)
+            X_t = torch.as_tensor(X_np, dtype=torch.float32)
+        else:
+            X_t = X.detach().to(dtype=torch.float32)
 
-        self.model.eval()
-        X_t = torch.as_tensor(X_np, dtype=torch.float32)
         if X_t.ndim == 2:
             X_t = X_t.unsqueeze(1)
         X_t = X_t.to(self.device)
 
+        self.model.eval()
         with torch.inference_mode():
             logits = self.model(X_t)
-            preds = logits.argmax(dim=-1).cpu().numpy()
+            preds = logits.argmax(dim=-1).cpu()
         return preds

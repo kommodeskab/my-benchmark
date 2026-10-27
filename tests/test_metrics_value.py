@@ -19,7 +19,7 @@ from audio_benchmark import (
 )
 
 
-def test_benchmark_result_value_property_and_post_init():
+def test_benchmark_result_value_property():
     # 1. When 'value' is explicitly present
     res = BenchmarkResult(
         model_name="model_a",
@@ -32,7 +32,7 @@ def test_benchmark_result_value_property_and_post_init():
     assert res.metrics["value"] == 0.85
     assert res.value == 0.85
 
-    # 2. When 'value' is missing, it should infer from candidate keys
+    # 2. When 'value' is missing, res.value returns None without guessing
     res_inferred_acc = BenchmarkResult(
         model_name="model_a",
         dataset_name="dataset_a",
@@ -41,8 +41,8 @@ def test_benchmark_result_value_property_and_post_init():
         cached=False,
         representations_shape=(10, 20, 64),
     )
-    assert res_inferred_acc.metrics["value"] == 0.92
-    assert res_inferred_acc.value == 0.92
+    assert "value" not in res_inferred_acc.metrics
+    assert res_inferred_acc.value is None
 
     res_inferred_r2 = BenchmarkResult(
         model_name="model_b",
@@ -52,8 +52,8 @@ def test_benchmark_result_value_property_and_post_init():
         cached=False,
         representations_shape=(10, 20, 64),
     )
-    assert res_inferred_r2.metrics["value"] == 0.78
-    assert res_inferred_r2.value == 0.78
+    assert "value" not in res_inferred_r2.metrics
+    assert res_inferred_r2.value is None
 
     res_inferred_seq = BenchmarkResult(
         model_name="model_c",
@@ -63,8 +63,8 @@ def test_benchmark_result_value_property_and_post_init():
         cached=False,
         representations_shape=(10, 20, 64),
     )
-    assert res_inferred_seq.metrics["value"] == 0.15
-    assert res_inferred_seq.value == 0.15
+    assert "value" not in res_inferred_seq.metrics
+    assert res_inferred_seq.value is None
 
 
 def test_benchmark_result_print_summary_handles_value(capsys):

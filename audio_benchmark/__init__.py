@@ -1,6 +1,5 @@
 """Audio Representation Learning Benchmark Suite."""
 
-from audio_benchmark.bayes_opt import BayesOptClassifier, BayesOptRegressor
 from audio_benchmark.benchmark import AudioBenchmark, BenchmarkResult
 from audio_benchmark.benchmarks import (
     CREMADClassificationBenchmark,
@@ -60,7 +59,7 @@ from audio_benchmark.tasks import (
     downsample_sequence,
     levenshtein_distance,
 )
-from audio_benchmark.utils import resolve_device, to_numpy
+from audio_benchmark.utils import resolve_device
 
 __all__ = [
     "AudioBenchmark",
@@ -69,8 +68,6 @@ __all__ = [
     "BaseRegressor",
     "BaseSequenceProbe",
     "BaseTask",
-    "BayesOptClassifier",
-    "BayesOptRegressor",
     "BenchmarkError",
     "BenchmarkResult",
     "CREMADClassificationBenchmark",
@@ -112,6 +109,5 @@ __all__ = [
     "levenshtein_distance",
     "parse_dataset_item",
     "resolve_device",
-    "to_numpy",
     "validate_dataset",
 ]

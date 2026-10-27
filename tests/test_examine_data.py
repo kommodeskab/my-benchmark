@@ -39,21 +39,11 @@ class SimpleAudioDataset(Dataset):
         }
 
 
-def test_base_task_extract_metadata_sources():
-    # 1. From list of dicts directly
+def test_base_task_extract_metadata():
     meta_list = [{"label": 0}, {"label": 1}]
-    extracted = BaseTask.extract_metadata(meta_list)
-    assert extracted == meta_list
-
-    # 2. From Dataset object
     ds = SimpleAudioDataset(meta_list)
     extracted_ds = BaseTask.extract_metadata(ds)
     assert extracted_ds == meta_list
-
-    # 3. From Dataset with .metadata attribute
-    ds.metadata = [{"label": 2}, {"label": 3}]
-    extracted_attr = BaseTask.extract_metadata(ds)
-    assert extracted_attr == [{"label": 2}, {"label": 3}]
 
 
 def test_global_classification_examine_data():

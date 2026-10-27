@@ -1,7 +1,6 @@
 """Global audio regression task."""
 
 import time
-from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -29,7 +28,7 @@ class RegressionTask(BaseTask):
         regressor: BaseRegressor,
         name: str = "regression",
         target_key: str = "target",
-        pooling: str | Callable[[torch.Tensor], torch.Tensor] = "mean",
+        pooling: str = "mean",
         metric: str = "r2",
     ):
         """Initialize the RegressionTask.
@@ -38,8 +37,7 @@ class RegressionTask(BaseTask):
             regressor: Downstream regressor instance conforming to BaseRegressor.
             name: Identifier for the task.
             target_key: Key in the sample metadata dictionary containing the regression target.
-            pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last',
-                or a callable f(representations) -> pooled_tensor.
+            pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last'.
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
         """
         super().__init__(name=name)
@@ -50,17 +48,7 @@ class RegressionTask(BaseTask):
             )
         self.metric = metric
         self.target_key = target_key
-        if regressor is None:
-            raise TypeError(
-                "regressor must be an instantiated BaseRegressor instance, got None. "
-                "Passing None as a model is not allowed."
-            )
-        elif isinstance(regressor, str):
-            raise TypeError(
-                f"Passing strings as models is not supported (got '{regressor}'). "
-                "Please pass an instantiated BaseRegressor instance."
-            )
-        elif not isinstance(regressor, BaseRegressor):
+        if not isinstance(regressor, BaseRegressor):
             raise TypeError(
                 f"regressor must be an instantiated BaseRegressor instance, got {type(regressor).__name__}."
             )
@@ -71,7 +59,7 @@ class RegressionTask(BaseTask):
         """Verify that the dataset metadata contains the expected target_key."""
         validate_dataset(dataset, required_metadata_keys=[self.target_key])
 
-    def pool_representations(self, representations: torch.Tensor) -> np.ndarray:
+    def pool_representations(self, representations: torch.Tensor) -> torch.Tensor:
         """Pool sequence representations (N, T', C') into clip-level features (N, C')."""
         return self.apply_pooling(representations, self.pooling)
 
@@ -132,21 +120,21 @@ class RegressionTask(BaseTask):
                     f"Test sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
                 ) from e
 
-        y_train = np.array(raw_train_targets, dtype=np.float32)
-        y_test = np.array(raw_test_targets, dtype=np.float32)
+        y_train = torch.as_tensor(raw_train_targets, dtype=torch.float32)
+        y_test = torch.as_tensor(raw_test_targets, dtype=torch.float32)
 
         regressor_inst = self.regressor
         regressor_name = regressor_inst.__class__.__name__
 
         is_sequence_probe = getattr(regressor_inst, "accepts_sequence", False)
         if is_sequence_probe:
-            X_train = train_representations.detach().cpu().numpy()
-            X_test = test_representations.detach().cpu().numpy()
+            X_train = train_representations
+            X_test = test_representations
             pooling_name = "none (transformer)"
         else:
             X_train = self.pool_representations(train_representations)
             X_test = self.pool_representations(test_representations)
-            pooling_name = self.pooling if isinstance(self.pooling, str) else "custom"
+            pooling_name = self.pooling
 
         start_time = time.perf_counter()
         regressor_inst.fit(X_train, y_train)
@@ -169,17 +157,14 @@ class RegressionTask(BaseTask):
             "train_r2": train_metrics["r2"],
             "training_time": training_time,
         }
-        if hasattr(regressor_inst, "best_params") and regressor_inst.best_params:
-            results["best_params"] = regressor_inst.best_params
-        if (
-            hasattr(regressor_inst, "best_score")
-            and regressor_inst.best_score is not None
-        ):
-            results["best_cv_score"] = regressor_inst.best_score
 
         return results
 
-    def examine_data(self, dataset: Any, testset: Any | None = None) -> dict[str, Any]:
+    def examine_data(
+        self,
+        dataset: Dataset,
+        testset: Dataset | None = None,
+    ) -> dict[str, Any]:
         """Examine the dataset in the context of global regression.
 
         Validates the datasets, checks target distributions across train and test sets,
@@ -192,11 +177,20 @@ class RegressionTask(BaseTask):
         Returns:
             dict[str, Any]: Dictionary containing dataset metadata and baseline metrics.
         """
-        self._validate_for_examination(dataset, [self.target_key])
-        train_metadata = self.extract_metadata(dataset)
-
+        if not isinstance(dataset, Dataset):
+            raise TypeError(
+                f"dataset must be an instance of Dataset, got {type(dataset).__name__}."
+            )
+        if testset is not None and not isinstance(testset, Dataset):
+            raise TypeError(
+                f"testset must be an instance of Dataset, got {type(testset).__name__}."
+            )
+        self.validate_dataset(dataset)
         if testset is not None:
-            self._validate_for_examination(testset, [self.target_key])
+            self.validate_dataset(testset)
+
+        train_metadata = self.extract_metadata(dataset)
+        if testset is not None:
             test_metadata = self.extract_metadata(testset)
         else:
             test_metadata = train_metadata

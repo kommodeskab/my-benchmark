@@ -28,6 +28,22 @@ class MismatchedFrameRegDataset(Dataset):
         }
 
 
+class SimpleDataset(Dataset):
+    def __init__(self, samples, audio_length: int = 16):
+        self.samples = samples
+        self.audio_length = audio_length
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return {
+            "waveform": torch.randn(1, self.audio_length),
+            "sample_rate": 16000,
+            "metadata": self.samples[idx],
+        }
+
+
 def test_frame_regression_with_regressors():
     task_linear = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
     task_knn = FrameRegressionTask(regressor=KNNBenchmarkRegressor())
@@ -44,7 +60,10 @@ def test_frame_regression_with_regressors():
         {"frame_targets": [float(i * 2 + j * 0.1) for j in range(16)]} for i in range(2)
     ]
 
-    info = task_linear.examine_data(train_meta, test_meta)
+    info = task_linear.examine_data(
+        SimpleDataset(train_meta, audio_length=16),
+        SimpleDataset(test_meta, audio_length=16),
+    )
     assert info["train_clips"] == 6
     assert info["test_clips"] == 2
     assert info["frame_length"] == 16
@@ -150,7 +169,10 @@ def test_frame_regression_variable_length_and_dictionary():
         assert "r2" in res
         assert "training_time" in res
 
-    info = task_mean.examine_data(train_meta, test_meta)
+    info = task_mean.examine_data(
+        SimpleDataset(train_meta, audio_length=60),
+        SimpleDataset(test_meta, audio_length=60),
+    )
     assert info["train_clips"] == 4
     assert info["test_clips"] == 2
     assert info["train_frames"] == 22
@@ -195,12 +217,18 @@ def test_benchmark_runner_with_frame_regression(tmp_path):
 
 
 def test_frame_regression_string_regressor_raises():
-    with pytest.raises(TypeError, match="Passing strings as models is not supported"):
+    with pytest.raises(
+        TypeError,
+        match=r"regressor must be an instantiated BaseRegressor instance, got str",
+    ):
         FrameRegressionTask(regressor="linear")
 
 
 def test_frame_regression_none_or_missing_regressor_raises():
-    with pytest.raises(TypeError, match="Passing None as a model is not allowed"):
+    with pytest.raises(
+        TypeError,
+        match=r"regressor must be an instantiated BaseRegressor instance, got NoneType",
+    ):
         FrameRegressionTask(regressor=None)
     with pytest.raises(TypeError):
         FrameRegressionTask()
