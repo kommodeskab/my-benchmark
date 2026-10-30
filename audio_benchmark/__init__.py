@@ -7,7 +7,6 @@ from audio_benchmark.benchmarks import (
     TIMITPhonemeSequenceModelingBenchmark,
     TIMITSpeechDurationRegressionBenchmark,
     TIMITTextSequenceModelingBenchmark,
-    VCTKAgeRegressionBenchmark,
     VCTKGenderClassificationBenchmark,
 )
 from audio_benchmark.cache import RepresentationCache
@@ -26,6 +25,7 @@ from audio_benchmark.dataset import (
 )
 from audio_benchmark.datasets import (
     CREMADDataset,
+    PTDBTUGDataset,
     SpeechCommandsDataset,
     TIMITDataset,
     VCTKDataset,
@@ -57,7 +57,6 @@ from audio_benchmark.tasks import (
     SequenceModelingTask,
     TransformerDecoderProbe,
     compute_token_error_rate,
-    downsample_sequence,
     levenshtein_distance,
 )
 from audio_benchmark.utils import resolve_device
@@ -88,6 +87,7 @@ __all__ = [
     "LinearBenchmarkRegressor",
     "MLPBenchmarkClassifier",
     "MLPBenchmarkRegressor",
+    "PTDBTUGDataset",
     "RegressionTask",
     "RepresentationCache",
     "SequenceModelingTask",
@@ -101,12 +101,10 @@ __all__ = [
     "TransformerBenchmarkClassifier",
     "TransformerBenchmarkRegressor",
     "TransformerDecoderProbe",
-    "VCTKAgeRegressionBenchmark",
     "VCTKDataset",
     "VCTKGenderClassificationBenchmark",
     "compute_token_error_rate",
     "deterministic_random_subset",
-    "downsample_sequence",
     "extract_representations",
     "levenshtein_distance",
     "parse_dataset_item",

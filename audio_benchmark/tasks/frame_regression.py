@@ -21,9 +21,9 @@ from audio_benchmark.tasks.downsampling import (
 class FrameRegressionTask(BaseTask):
     """Frame-level audio regression task.
 
-    Evaluates frame-level audio regression by temporally aligning representation
-    features to raw continuous targets via pooling (downsampling) or nearest
-    repetition (upsampling). Raw ground-truth targets are never downsampled or modified.
+    Evaluates frame-level audio regression by linearly interpolating representation
+    features to match the sequence length of raw continuous targets.
+    Raw ground-truth targets are never modified.
     """
 
     def __init__(
@@ -32,19 +32,16 @@ class FrameRegressionTask(BaseTask):
         name: str = "frame_regression",
         target_key: str = "frame_targets",
         metric: str = "r2",
-        pooling: str = "mean",
-        audio_length: int | None = None,
+        pooling: str = "linear",
     ):
         """Initialize the FrameRegressionTask.
 
         Args:
             regressor: Downstream regressor instance conforming to BaseRegressor.
             name: Identifier for the task.
-            target_key: Metadata key containing per-frame continuous targets (1D sequence or dict).
+            target_key: Metadata key containing per-frame continuous targets (flat torch.Tensor or list).
             metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
-            pooling: Pooling strategy when representation length T' >= target count K
-                ('mean', 'max', 'min', 'median').
-            audio_length: Optional total audio length in samples.
+            pooling: Temporal alignment strategy ('linear' interpolation).
         """
         super().__init__(name=name)
         valid_metrics = ("r2", "mse", "rmse", "mae", "pearson_r")
@@ -52,22 +49,15 @@ class FrameRegressionTask(BaseTask):
             raise ValueError(
                 f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
             )
-        valid_poolings = ("mean", "max", "min", "median")
-        if pooling not in valid_poolings:
+        valid_pooling = ("linear",)
+        if pooling not in valid_pooling:
             raise ValueError(
-                f"Unknown pooling '{pooling}'. Supported pooling methods: {valid_poolings}"
-            )
-        if audio_length is not None and (
-            not isinstance(audio_length, int) or audio_length <= 0
-        ):
-            raise ValueError(
-                f"audio_length must be a positive integer, got {audio_length!r}."
+                f"Unknown pooling '{pooling}'. Supported pooling: {valid_pooling}"
             )
 
         self.metric = metric
         self.target_key = target_key
         self.pooling = pooling
-        self.audio_length = audio_length
 
         if not isinstance(regressor, BaseRegressor):
             raise TypeError(
@@ -80,11 +70,9 @@ class FrameRegressionTask(BaseTask):
         validate_dataset(dataset, required_metadata_keys=[self.target_key])
 
         parsed = parse_dataset_item(dataset[0])
-        audio_length = parsed["waveform"].shape[-1]
         targets = parsed["metadata"][self.target_key]
-        _, values = parse_frame_targets(
+        values = parse_frame_targets(
             targets,
-            audio_length=audio_length,
             key_name=self.target_key,
         )
         for idx, val in enumerate(values):
@@ -105,7 +93,7 @@ class FrameRegressionTask(BaseTask):
         """Align representation features to raw frame targets and evaluate regressor.
 
         Ground-truth targets are never downsampled or modified. Features are aligned
-        to targets via pooling (when T' >= K) or nearest repetition (when T' < K).
+        to targets via 1D linear interpolation.
 
         Args:
             train_representations: Tensor of shape (N_train, T', C') or sequence of representations.
@@ -137,26 +125,14 @@ class FrameRegressionTask(BaseTask):
                     f"Train sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
             raw_target = meta[self.target_key]
-            audio_len = meta.get("audio_length") or self.audio_length
-            if isinstance(raw_target, dict) and audio_len is None:
-                raise InvalidDatasetError(
-                    f"Train sample at index {idx} contains dictionary frame targets in '{self.target_key}', "
-                    "which require 'audio_length' in metadata or task.audio_length."
-                )
-            timestamps, raw_targets = parse_frame_targets(
+            raw_targets = parse_frame_targets(
                 raw_target,
-                audio_length=audio_len,
                 key_name=self.target_key,
             )
             clip_reps = train_representations[idx]
-            eff_audio_len = (
-                float(audio_len) if audio_len is not None else float(len(timestamps))
-            )
             aligned = align_features_to_targets(
                 representations=clip_reps,
-                target_timestamps=timestamps,
-                audio_length=eff_audio_len,
-                pooling=self.pooling,
+                target_len=len(raw_targets),
             )
             train_aligned.append(aligned)
             try:
@@ -174,26 +150,14 @@ class FrameRegressionTask(BaseTask):
                     f"Test sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
             raw_target = meta[self.target_key]
-            audio_len = meta.get("audio_length") or self.audio_length
-            if isinstance(raw_target, dict) and audio_len is None:
-                raise InvalidDatasetError(
-                    f"Test sample at index {idx} contains dictionary frame targets in '{self.target_key}', "
-                    "which require 'audio_length' in metadata or task.audio_length."
-                )
-            timestamps, raw_targets = parse_frame_targets(
+            raw_targets = parse_frame_targets(
                 raw_target,
-                audio_length=audio_len,
                 key_name=self.target_key,
             )
             clip_reps = test_representations[idx]
-            eff_audio_len = (
-                float(audio_len) if audio_len is not None else float(len(timestamps))
-            )
             aligned = align_features_to_targets(
                 representations=clip_reps,
-                target_timestamps=timestamps,
-                audio_length=eff_audio_len,
-                pooling=self.pooling,
+                target_len=len(raw_targets),
             )
             test_aligned.append(aligned)
             try:
@@ -282,9 +246,8 @@ class FrameRegressionTask(BaseTask):
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            _, raw_values = parse_frame_targets(
+            raw_values = parse_frame_targets(
                 meta[self.target_key],
-                audio_length=meta.get("audio_length") or self.audio_length,
                 key_name=self.target_key,
             )
             for t in raw_values:
@@ -301,9 +264,8 @@ class FrameRegressionTask(BaseTask):
                 raise InvalidDatasetError(
                     f"Sample at index {idx} metadata does not contain '{self.target_key}'."
                 )
-            _, raw_values = parse_frame_targets(
+            raw_values = parse_frame_targets(
                 meta[self.target_key],
-                audio_length=meta.get("audio_length") or self.audio_length,
                 key_name=self.target_key,
             )
             for t in raw_values:
@@ -324,9 +286,8 @@ class FrameRegressionTask(BaseTask):
 
         sample_targets = parse_frame_targets(
             train_metadata[0][self.target_key],
-            audio_length=train_metadata[0].get("audio_length") or self.audio_length,
             key_name=self.target_key,
-        )[1]
+        )
         frame_len_sample = len(sample_targets) if train_metadata else 0
 
         train_mean = float(np.mean(train_targets_np))

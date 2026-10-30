@@ -14,7 +14,6 @@ from audio_benchmark.benchmarks.timit_text import (
     TIMITTextSequenceModelingBenchmark,
 )
 from audio_benchmark.benchmarks.vctk import VCTKGenderClassificationBenchmark
-from audio_benchmark.benchmarks.vctk_age import VCTKAgeRegressionBenchmark
 
 __all__ = [
     "CREMADClassificationBenchmark",
@@ -22,6 +21,5 @@ __all__ = [
     "TIMITPhonemeSequenceModelingBenchmark",
     "TIMITSpeechDurationRegressionBenchmark",
     "TIMITTextSequenceModelingBenchmark",
-    "VCTKAgeRegressionBenchmark",
     "VCTKGenderClassificationBenchmark",
 ]

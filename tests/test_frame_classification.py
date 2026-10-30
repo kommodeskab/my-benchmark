@@ -93,7 +93,21 @@ def test_frame_classification_dataset_validation():
     valid_seq_ds = MismatchedFrameDataset()
     task.validate_dataset(valid_seq_ds)
 
-    # Valid dictionary targets dataset
+    # Valid flat tensor targets dataset
+    class TensorFrameDataset(Dataset):
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            return {
+                "waveform": torch.randn(1, 100),
+                "sample_rate": 16000,
+                "metadata": {"frame_labels": torch.tensor([0, 1])},
+            }
+
+    task.validate_dataset(TensorFrameDataset())
+
+    # Invalid cases: dictionary targets are rejected
     class DictFrameDataset(Dataset):
         def __len__(self):
             return 2
@@ -105,22 +119,10 @@ def test_frame_classification_dataset_validation():
                 "metadata": {"frame_labels": {0: 0, 50: 1}},
             }
 
-    task.validate_dataset(DictFrameDataset())
-
-    # Invalid cases: out of bounds timestamp >= audio_length
-    class OutOfBoundsFrameDataset(Dataset):
-        def __len__(self):
-            return 2
-
-        def __getitem__(self, idx):
-            return {
-                "waveform": torch.randn(1, 100),
-                "sample_rate": 16000,
-                "metadata": {"frame_labels": {100: 0}},
-            }
-
-    with pytest.raises(InvalidDatasetError, match="exceeds audio length"):
-        task.validate_dataset(OutOfBoundsFrameDataset())
+    with pytest.raises(
+        InvalidDatasetError, match="must be a flat torch.Tensor or list"
+    ):
+        task.validate_dataset(DictFrameDataset())
 
     # Invalid cases: empty sequence
     class EmptyFrameDataset(Dataset):
@@ -138,15 +140,10 @@ def test_frame_classification_dataset_validation():
         task.validate_dataset(EmptyFrameDataset())
 
 
-def test_frame_classification_variable_length_and_dictionary():
-    task_mean = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), pooling="mean"
-    )
-    task_max = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), pooling="max"
-    )
+def test_frame_classification_variable_length_and_tensor():
+    task = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
 
-    # Clips with varying target counts: clip 0 has 3 targets, clip 1 has 5 targets, clip 2 has dict
+    # Clips with varying target counts: clip 0 has 3 targets, clip 1 has 5 targets, clip 2 has flat tensor
     train_reps = torch.randn(4, 6, 8)
     train_meta = [
         {"frame_labels": [0, 1, 0], "audio_length": 60},  # K=3 (downsample 6 -> 3)
@@ -155,24 +152,23 @@ def test_frame_classification_variable_length_and_dictionary():
             "audio_length": 60,
         },  # K=5 (downsample 6 -> 5)
         {
-            "frame_labels": {0: 0, 30: 1},
+            "frame_labels": torch.tensor([0, 1]),
             "audio_length": 60,
-        },  # dict K=2 (downsample 6 -> 2)
+        },  # flat tensor K=2 (downsample 6 -> 2)
         {"frame_labels": [0] * 12, "audio_length": 60},  # K=12 (upsample 6 -> 12)
     ]
     test_reps = torch.randn(2, 6, 8)
     test_meta = [
-        {"frame_labels": {10: 1, 40: 0}, "audio_length": 60},  # dict K=2
+        {"frame_labels": torch.tensor([1, 0]), "audio_length": 60},  # flat tensor K=2
         {"frame_labels": [1, 1, 0, 0], "audio_length": 60},  # K=4
     ]
 
-    for task in (task_mean, task_max):
-        res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
-        assert 0.0 <= res["accuracy"] <= 1.0
-        assert "training_time" in res
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert 0.0 <= res["accuracy"] <= 1.0
+    assert "training_time" in res
 
-    # Verify examine_data computes correct stats on variable length / dict targets
-    info = task_mean.examine_data(
+    # Verify examine_data computes correct stats on variable length / tensor targets
+    info = task.examine_data(
         SimpleDataset(train_meta, audio_length=60),
         SimpleDataset(test_meta, audio_length=60),
     )
@@ -184,6 +180,19 @@ def test_frame_classification_variable_length_and_dictionary():
     assert info["test_frames"] == 6
     assert info["total_frames"] == 28
     assert info["num_classes"] == 2
+
+
+def test_frame_classification_rejects_dict():
+    task = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
+    with pytest.raises(
+        InvalidDatasetError, match="must be a flat torch.Tensor or list"
+    ):
+        task.evaluate(
+            torch.randn(1, 4, 8),
+            [{"frame_labels": {0: 0, 10: 1}}],
+            torch.randn(1, 4, 8),
+            [{"frame_labels": [0, 1]}],
+        )
 
 
 def test_frame_classification_invalid_pooling():

@@ -23,9 +23,9 @@ from audio_benchmark.tasks.downsampling import (
 class FrameClassificationTask(BaseTask):
     """Frame-level audio classification task.
 
-    Evaluates frame-level audio classification by temporally aligning representation
-    features to raw ground-truth targets via pooling (downsampling) or nearest
-    repetition (upsampling). Raw ground-truth targets are never downsampled or modified.
+    Evaluates frame-level audio classification by linearly interpolating representation
+    features to match the sequence length of raw ground-truth targets.
+    Raw ground-truth targets are never modified.
     """
 
     def __init__(
@@ -34,19 +34,16 @@ class FrameClassificationTask(BaseTask):
         name: str = "frame_classification",
         label_key: str = "frame_labels",
         metric: str = "accuracy",
-        pooling: str = "mean",
-        audio_length: int | None = None,
+        pooling: str = "linear",
     ):
         """Initialize the FrameClassificationTask.
 
         Args:
             classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
-            label_key: Metadata key containing per-frame labels (1D sequence or dict).
+            label_key: Metadata key containing per-frame labels (flat torch.Tensor or list).
             metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
-            pooling: Pooling strategy when representation length T' >= target count K
-                ('mean', 'max', 'min', 'median').
-            audio_length: Optional total audio length in samples.
+            pooling: Temporal alignment strategy ('linear' interpolation).
         """
         super().__init__(name=name)
         valid_metrics = ("accuracy", "macro_f1", "micro_f1")
@@ -54,22 +51,15 @@ class FrameClassificationTask(BaseTask):
             raise ValueError(
                 f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
             )
-        valid_poolings = ("mean", "max", "min", "median")
-        if pooling not in valid_poolings:
+        valid_pooling = ("linear",)
+        if pooling not in valid_pooling:
             raise ValueError(
-                f"Unknown pooling '{pooling}'. Supported pooling methods: {valid_poolings}"
-            )
-        if audio_length is not None and (
-            not isinstance(audio_length, int) or audio_length <= 0
-        ):
-            raise ValueError(
-                f"audio_length must be a positive integer, got {audio_length!r}."
+                f"Unknown pooling '{pooling}'. Supported pooling: {valid_pooling}"
             )
 
         self.metric = metric
         self.label_key = label_key
         self.pooling = pooling
-        self.audio_length = audio_length
 
         if not isinstance(classifier, BaseClassifier):
             raise TypeError(
@@ -82,11 +72,9 @@ class FrameClassificationTask(BaseTask):
         validate_dataset(dataset, required_metadata_keys=[self.label_key])
 
         parsed = parse_dataset_item(dataset[0])
-        audio_length = parsed["waveform"].shape[-1]
         labels = parsed["metadata"][self.label_key]
         parse_frame_targets(
             labels,
-            audio_length=audio_length,
             key_name=self.label_key,
         )
 
@@ -100,7 +88,7 @@ class FrameClassificationTask(BaseTask):
         """Align representation features to raw frame targets and evaluate classifier.
 
         Ground-truth targets are never downsampled or modified. Features are aligned
-        to targets via pooling (when T' >= K) or nearest repetition (when T' < K).
+        to targets via 1D linear interpolation.
 
         Args:
             train_representations: Tensor of shape (N_train, T', C') or sequence of representations.
@@ -132,26 +120,14 @@ class FrameClassificationTask(BaseTask):
                     f"Train sample at index {idx} metadata does not contain '{self.label_key}'."
                 )
             raw_target = meta[self.label_key]
-            audio_len = meta.get("audio_length") or self.audio_length
-            if isinstance(raw_target, dict) and audio_len is None:
-                raise InvalidDatasetError(
-                    f"Train sample at index {idx} contains dictionary frame targets in '{self.label_key}', "
-                    "which require 'audio_length' in metadata or task.audio_length."
-                )
-            timestamps, raw_labels = parse_frame_targets(
+            raw_labels = parse_frame_targets(
                 raw_target,
-                audio_length=audio_len,
                 key_name=self.label_key,
             )
             clip_reps = train_representations[idx]
-            eff_audio_len = (
-                float(audio_len) if audio_len is not None else float(len(timestamps))
-            )
             aligned = align_features_to_targets(
                 representations=clip_reps,
-                target_timestamps=timestamps,
-                audio_length=eff_audio_len,
-                pooling=self.pooling,
+                target_len=len(raw_labels),
             )
             train_aligned.append(aligned)
             train_labels_list.append(raw_labels)
@@ -164,26 +140,14 @@ class FrameClassificationTask(BaseTask):
                     f"Test sample at index {idx} metadata does not contain '{self.label_key}'."
                 )
             raw_target = meta[self.label_key]
-            audio_len = meta.get("audio_length") or self.audio_length
-            if isinstance(raw_target, dict) and audio_len is None:
-                raise InvalidDatasetError(
-                    f"Test sample at index {idx} contains dictionary frame targets in '{self.label_key}', "
-                    "which require 'audio_length' in metadata or task.audio_length."
-                )
-            timestamps, raw_labels = parse_frame_targets(
+            raw_labels = parse_frame_targets(
                 raw_target,
-                audio_length=audio_len,
                 key_name=self.label_key,
             )
             clip_reps = test_representations[idx]
-            eff_audio_len = (
-                float(audio_len) if audio_len is not None else float(len(timestamps))
-            )
             aligned = align_features_to_targets(
                 representations=clip_reps,
-                target_timestamps=timestamps,
-                audio_length=eff_audio_len,
-                pooling=self.pooling,
+                target_len=len(raw_labels),
             )
             test_aligned.append(aligned)
             test_labels_list.append(raw_labels)
@@ -270,18 +234,16 @@ class FrameClassificationTask(BaseTask):
 
         train_labels: list[Any] = []
         for meta in train_metadata:
-            _, targets = parse_frame_targets(
+            targets = parse_frame_targets(
                 meta[self.label_key],
-                audio_length=meta.get("audio_length") or self.audio_length,
                 key_name=self.label_key,
             )
             train_labels.extend(targets)
 
         test_labels: list[Any] = []
         for meta in test_metadata:
-            _, targets = parse_frame_targets(
+            targets = parse_frame_targets(
                 meta[self.label_key],
-                audio_length=meta.get("audio_length") or self.audio_length,
                 key_name=self.label_key,
             )
             test_labels.extend(targets)
@@ -300,9 +262,8 @@ class FrameClassificationTask(BaseTask):
 
         sample_targets = parse_frame_targets(
             train_metadata[0][self.label_key],
-            audio_length=train_metadata[0].get("audio_length") or self.audio_length,
             key_name=self.label_key,
-        )[1]
+        )
         frame_len_sample = len(sample_targets) if train_metadata else 0
 
         class_counts = {

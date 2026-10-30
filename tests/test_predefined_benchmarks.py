@@ -12,14 +12,12 @@ from audio_benchmark.benchmarks import (
     TIMITPhonemeSequenceModelingBenchmark,
     TIMITSpeechDurationRegressionBenchmark,
     TIMITTextSequenceModelingBenchmark,
-    VCTKAgeRegressionBenchmark,
     VCTKGenderClassificationBenchmark,
 )
 from audio_benchmark.classifiers import LinearBenchmarkClassifier
 from audio_benchmark.dataset import BaseDataset
 from audio_benchmark.dummy import DummyAudioModel
 from audio_benchmark.regressors import (
-    LinearBenchmarkRegressor,
     TransformerBenchmarkRegressor,
 )
 from audio_benchmark.tasks import (
@@ -325,64 +323,6 @@ class TestVCTKGenderClassificationBenchmark:
     def test_invalid_max_size_raises(self) -> None:
         with pytest.raises(ValueError, match="max_size must be a positive integer"):
             VCTKGenderClassificationBenchmark(max_size=-2)
-
-
-class TestVCTKAgeRegressionBenchmark:
-    """Tests for VCTKAgeRegressionBenchmark."""
-
-    @patch("audio_benchmark.benchmarks.vctk_age.VCTKDataset")
-    def test_default_configuration_and_run(self, mock_vctk_dataset, tmp_path) -> None:
-        mock_vctk_dataset.side_effect = [
-            _MockClassificationDataset(size=8, label_key="age"),
-            _MockClassificationDataset(size=4, label_key="age"),
-        ]
-
-        benchmark = VCTKAgeRegressionBenchmark(
-            cache_dir=tmp_path / "cache",
-            enable_cache=False,
-        )
-
-        assert isinstance(benchmark.dataset, BaseDataset)
-        assert isinstance(benchmark.testset, BaseDataset)
-        assert benchmark.dataset.normalize is True
-        assert benchmark.testset.normalize is True
-        assert benchmark.dataset.sample_rate == 16000
-        assert benchmark.dataset.length == 48000
-        assert benchmark.dataset[0]["waveform"].shape == (1, 48000)
-        assert benchmark.dataset[0]["sample_rate"] == 16000
-        assert "age" in benchmark.dataset[0]["metadata"]
-
-        assert isinstance(benchmark.task, RegressionTask)
-        assert isinstance(benchmark.task.regressor, LinearBenchmarkRegressor)
-        assert benchmark.task.target_key == "age"
-        assert benchmark.dataset_name == "VCTK train (age)"
-        assert benchmark.testset_name == "VCTK val (age)"
-
-        model = DummyAudioModel(representation_dim=32)
-        res = benchmark.run(
-            model=model, model_name="dummy", batch_size=4, show_progress=False
-        )
-        assert "r2" in res.metrics or "value" in res.metrics
-
-    @patch("audio_benchmark.benchmarks.vctk_age.VCTKDataset")
-    def test_max_size(self, mock_vctk_dataset, tmp_path) -> None:
-        mock_vctk_dataset.side_effect = [
-            _MockClassificationDataset(size=10, label_key="age"),
-            _MockClassificationDataset(size=6, label_key="age"),
-        ]
-
-        benchmark = VCTKAgeRegressionBenchmark(
-            max_size=3,
-            cache_dir=tmp_path / "cache",
-            enable_cache=False,
-        )
-
-        assert len(benchmark.dataset) == 3
-        assert len(benchmark.testset) == 3
-
-    def test_invalid_max_size_raises(self) -> None:
-        with pytest.raises(ValueError, match="max_size must be a positive integer"):
-            VCTKAgeRegressionBenchmark(max_size=0)
 
 
 class TestTIMITPhonemeSequenceModelingBenchmark:

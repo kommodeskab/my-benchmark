@@ -1,5 +1,4 @@
 from audio_benchmark.tasks.base import BaseTask
-from audio_benchmark.tasks.downsampling import downsample_sequence
 from audio_benchmark.tasks.frame_classification import FrameClassificationTask
 from audio_benchmark.tasks.frame_regression import FrameRegressionTask
 from audio_benchmark.tasks.global_classification import GlobalClassificationTask
@@ -28,6 +27,5 @@ __all__ = [
     "TransformerDecoderProbe",
     "Vocabulary",
     "compute_token_error_rate",
-    "downsample_sequence",
     "levenshtein_distance",
 ]

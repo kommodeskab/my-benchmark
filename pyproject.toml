@@ -15,7 +15,8 @@ dependencies = [
     "pytest>=9.1.1",
     "tqdm>=4.60.0",
     "torchaudio==2.8.0",
-    "datasets>=2.14.0",
+    "datasets<3.0.0",
+    "librosa>=0.11.0",
 ]
 
 [project.optional-dependencies]
