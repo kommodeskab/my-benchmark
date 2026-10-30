@@ -3,6 +3,8 @@
 from audio_benchmark.benchmark import AudioBenchmark, BenchmarkResult
 from audio_benchmark.benchmarks import (
     CREMADClassificationBenchmark,
+    PTDBPitchClassificationBenchmark,
+    PTDBVoiceActivityClassificationBenchmark,
     SpeechCommandsClassificationBenchmark,
     TIMITPhonemeSequenceModelingBenchmark,
     TIMITSpeechDurationRegressionBenchmark,
@@ -87,7 +89,9 @@ __all__ = [
     "LinearBenchmarkRegressor",
     "MLPBenchmarkClassifier",
     "MLPBenchmarkRegressor",
+    "PTDBPitchClassificationBenchmark",
     "PTDBTUGDataset",
+    "PTDBVoiceActivityClassificationBenchmark",
     "RegressionTask",
     "RepresentationCache",
     "SequenceModelingTask",

@@ -29,7 +29,6 @@ class RegressionTask(BaseTask):
         name: str = "regression",
         target_key: str = "target",
         pooling: str = "mean",
-        metric: str = "r2",
     ):
         """Initialize the RegressionTask.
 
@@ -38,22 +37,22 @@ class RegressionTask(BaseTask):
             name: Identifier for the task.
             target_key: Key in the sample metadata dictionary containing the regression target.
             pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last'.
-            metric: Primary metric for the task ('r2', 'mse', 'rmse', 'mae', 'pearson_r').
+
+        Raises:
+            TypeError: If regressor is not an instance of BaseRegressor.
         """
         super().__init__(name=name)
-        valid_metrics = ("r2", "mse", "rmse", "mae", "pearson_r")
-        if metric not in valid_metrics:
-            raise ValueError(
-                f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
-            )
-        self.metric = metric
-        self.target_key = target_key
         if not isinstance(regressor, BaseRegressor):
             raise TypeError(
                 f"regressor must be an instantiated BaseRegressor instance, got {type(regressor).__name__}."
             )
+
         self.regressor = regressor
+        self.target_key = target_key
         self.pooling = pooling
+        self.metric = "r2"
+        self.m_min = 0.0
+        self.m_max = 1.0
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that the dataset metadata contains the expected target_key."""
@@ -62,6 +61,46 @@ class RegressionTask(BaseTask):
     def pool_representations(self, representations: torch.Tensor) -> torch.Tensor:
         """Pool sequence representations (N, T', C') into clip-level features (N, C')."""
         return self.apply_pooling(representations, self.pooling)
+
+    def _extract_targets(
+        self,
+        metadata: list[dict[str, Any]],
+        prefix: str = "Sample",
+    ) -> list[float]:
+        """Extract and convert continuous targets from metadata to floats."""
+        targets: list[float] = []
+        for idx, meta in enumerate(metadata):
+            if self.target_key not in meta:
+                raise InvalidDatasetError(
+                    f"{prefix} at index {idx} metadata does not contain target key '{self.target_key}'."
+                )
+            try:
+                targets.append(float(meta[self.target_key]))
+            except (ValueError, TypeError) as e:
+                raise TaskError(
+                    f"{prefix} at index {idx} target '{meta[self.target_key]}' cannot be converted to float: {e}"
+                ) from e
+        return targets
+
+    def _extract_split_targets(
+        self,
+        representations: Any,
+        metadata: list[dict[str, Any]],
+        split_name: str,
+    ) -> torch.Tensor:
+        """Validate split lengths and return float32 target tensor."""
+        if len(representations) != len(metadata):
+            raise TaskError(
+                f"Length mismatch: {len(representations)} {split_name} representations vs "
+                f"{len(metadata)} {split_name} metadata entries."
+            )
+        if len(representations) == 0:
+            raise TaskError(f"No {split_name} representations provided for evaluation.")
+
+        raw_targets = self._extract_targets(
+            metadata, prefix=f"{split_name.capitalize()} sample"
+        )
+        return torch.as_tensor(raw_targets, dtype=torch.float32)
 
     def evaluate(
         self,
@@ -81,53 +120,14 @@ class RegressionTask(BaseTask):
         Returns:
             dict[str, Any]: Dictionary of evaluation results.
         """
-        if len(train_representations) != len(train_metadata):
-            raise TaskError(
-                f"Length mismatch: {len(train_representations)} train representations vs {len(train_metadata)} train metadata entries."
-            )
-        if len(test_representations) != len(test_metadata):
-            raise TaskError(
-                f"Length mismatch: {len(test_representations)} test representations vs {len(test_metadata)} test metadata entries."
-            )
-        if len(train_representations) == 0:
-            raise TaskError("No train representations provided for evaluation.")
-        if len(test_representations) == 0:
-            raise TaskError("No test representations provided for evaluation.")
+        y_train = self._extract_split_targets(
+            train_representations, train_metadata, "train"
+        )
+        y_test = self._extract_split_targets(
+            test_representations, test_metadata, "test"
+        )
 
-        raw_train_targets = []
-        for i, meta in enumerate(train_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Train sample at index {i} metadata does not contain target key '{self.target_key}'."
-                )
-            try:
-                raw_train_targets.append(float(meta[self.target_key]))
-            except (ValueError, TypeError) as e:
-                raise TaskError(
-                    f"Train sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
-                ) from e
-
-        raw_test_targets = []
-        for i, meta in enumerate(test_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Test sample at index {i} metadata does not contain target key '{self.target_key}'."
-                )
-            try:
-                raw_test_targets.append(float(meta[self.target_key]))
-            except (ValueError, TypeError) as e:
-                raise TaskError(
-                    f"Test sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
-                ) from e
-
-        y_train = torch.as_tensor(raw_train_targets, dtype=torch.float32)
-        y_test = torch.as_tensor(raw_test_targets, dtype=torch.float32)
-
-        regressor_inst = self.regressor
-        regressor_name = regressor_inst.__class__.__name__
-
-        is_sequence_probe = getattr(regressor_inst, "accepts_sequence", False)
-        if is_sequence_probe:
+        if getattr(self.regressor, "accepts_sequence", False):
             X_train = train_representations
             X_test = test_representations
             pooling_name = "none (transformer)"
@@ -137,17 +137,19 @@ class RegressionTask(BaseTask):
             pooling_name = self.pooling
 
         start_time = time.perf_counter()
-        regressor_inst.fit(X_train, y_train)
+        self.regressor.fit(X_train, y_train)
         training_time = float(time.perf_counter() - start_time)
 
-        metrics = regressor_inst.evaluate(X_test, y_test)
-        train_metrics = regressor_inst.evaluate(X_train, y_train)
+        metrics = self.regressor.evaluate(X_test, y_test)
+        train_metrics = self.regressor.evaluate(X_train, y_train)
+        value = float(metrics[self.metric])
 
-        results = {
+        return {
             "task": self.name,
-            "regressor": regressor_name,
+            "regressor": self.regressor.__class__.__name__,
             "pooling": pooling_name,
-            "value": float(metrics[self.metric]),
+            "value": value,
+            "normalized_value": self.normalize_metric(value, self.m_min, self.m_max),
             "mse": metrics["mse"],
             "rmse": metrics["rmse"],
             "mae": metrics["mae"],
@@ -157,8 +159,6 @@ class RegressionTask(BaseTask):
             "train_r2": train_metrics["r2"],
             "training_time": training_time,
         }
-
-        return results
 
     def examine_data(
         self,
@@ -190,66 +190,21 @@ class RegressionTask(BaseTask):
             self.validate_dataset(testset)
 
         train_metadata = self.extract_metadata(dataset)
-        if testset is not None:
-            test_metadata = self.extract_metadata(testset)
-        else:
-            test_metadata = train_metadata
+        test_metadata = (
+            self.extract_metadata(testset) if testset is not None else train_metadata
+        )
 
-        if len(train_metadata) == 0:
-            raise TaskError("Cannot examine an empty dataset.")
-
-        raw_train_targets = []
-        for i, meta in enumerate(train_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Sample at index {i} metadata does not contain target key '{self.target_key}'."
-                )
-            try:
-                raw_train_targets.append(float(meta[self.target_key]))
-            except (ValueError, TypeError) as e:
-                raise TaskError(
-                    f"Sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
-                ) from e
-
-        raw_test_targets = []
-        for i, meta in enumerate(test_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Sample at index {i} metadata does not contain target key '{self.target_key}'."
-                )
-            try:
-                raw_test_targets.append(float(meta[self.target_key]))
-            except (ValueError, TypeError) as e:
-                raise TaskError(
-                    f"Sample at index {i} target '{meta[self.target_key]}' cannot be converted to float: {e}"
-                ) from e
-
-        y_train = np.array(raw_train_targets, dtype=np.float32)
-        y_test = np.array(raw_test_targets, dtype=np.float32)
+        y_train = np.array(self._extract_targets(train_metadata), dtype=np.float32)
+        y_test = np.array(self._extract_targets(test_metadata), dtype=np.float32)
 
         train_mean = float(np.mean(y_train))
         y_pred_baseline = np.full_like(y_test, train_mean)
 
         baseline_mse = float(mean_squared_error(y_test, y_pred_baseline))
-        baseline_rmse = float(np.sqrt(baseline_mse))
-        baseline_mae = float(mean_absolute_error(y_test, y_pred_baseline))
         try:
             baseline_r2 = float(r2_score(y_test, y_pred_baseline))
         except (ValueError, ZeroDivisionError):
             baseline_r2 = 0.0
-
-        if self.metric == "r2":
-            baseline_value = baseline_r2
-        elif self.metric == "mse":
-            baseline_value = baseline_mse
-        elif self.metric == "rmse":
-            baseline_value = baseline_rmse
-        elif self.metric == "mae":
-            baseline_value = baseline_mae
-        elif self.metric == "pearson_r":
-            baseline_value = 0.0
-        else:
-            baseline_value = baseline_r2
 
         return {
             "task": self.name,
@@ -260,13 +215,16 @@ class RegressionTask(BaseTask):
             "target_key": self.target_key,
             "target_min": float(np.min(y_train)),
             "target_max": float(np.max(y_train)),
-            "target_mean": float(np.mean(y_train)),
+            "target_mean": train_mean,
             "target_std": float(np.std(y_train)),
             "baseline_strategy": "mean_predictor",
             "baseline_metric": self.metric,
-            "baseline_value": float(baseline_value),
+            "baseline_value": baseline_r2,
+            "baseline_normalized_value": self.normalize_metric(
+                baseline_r2, self.m_min, self.m_max
+            ),
             "baseline_r2": baseline_r2,
             "baseline_mse": baseline_mse,
-            "baseline_rmse": baseline_rmse,
-            "baseline_mae": baseline_mae,
+            "baseline_rmse": float(np.sqrt(baseline_mse)),
+            "baseline_mae": float(mean_absolute_error(y_test, y_pred_baseline)),
         }

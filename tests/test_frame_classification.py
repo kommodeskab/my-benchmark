@@ -195,13 +195,6 @@ def test_frame_classification_rejects_dict():
         )
 
 
-def test_frame_classification_invalid_pooling():
-    with pytest.raises(ValueError, match="Unknown pooling"):
-        FrameClassificationTask(
-            classifier=KNNBenchmarkClassifier(), pooling="unsupported"
-        )
-
-
 def test_benchmark_runner_with_frame_classification(tmp_path):
     train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
@@ -249,3 +242,70 @@ def test_frame_classification_none_or_missing_classifier_raises():
         FrameClassificationTask(classifier=None)
     with pytest.raises(TypeError):
         FrameClassificationTask()
+
+
+def test_frame_classification_slices_to_rep_length():
+    """Verify trailing padded frames beyond rep_length are ignored before interpolation."""
+    task = FrameClassificationTask(classifier=KNNBenchmarkClassifier(n_neighbors=1))
+
+    # Sample 0 has rep_length=2 (valid frames: [0.0], [10.0]; padded frames: [999.0, 999.0])
+    # Sample 1 has rep_length=4 (valid frames: [0.0], [0.0], [10.0], [10.0])
+    train_reps = torch.tensor(
+        [
+            [[0.0, 0.0], [10.0, 10.0], [999.0, 999.0], [999.0, 999.0]],
+            [[0.0, 0.0], [0.0, 0.0], [10.0, 10.0], [10.0, 10.0]],
+        ],
+        dtype=torch.float32,
+    )
+    train_meta = [
+        {"frame_labels": [0, 1], "rep_length": 2},
+        {"frame_labels": [0, 0, 1, 1], "rep_length": 4},
+    ]
+
+    # Test sample has rep_length=2 with huge corrupt values in the padded tail
+    test_reps = torch.tensor(
+        [[[0.0, 0.0], [10.0, 10.0], [-999.0, -999.0], [999.0, 999.0]]],
+        dtype=torch.float32,
+    )
+    test_meta = [{"frame_labels": [0, 1], "rep_length": 2}]
+
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert res["accuracy"] == 1.0
+
+
+def test_frame_classification_ignore_label():
+    """Verify ignore_label excludes specified frames from training, evaluation, and examine_data."""
+    task = FrameClassificationTask(
+        classifier=KNNBenchmarkClassifier(n_neighbors=1),
+        ignore_label=0,
+    )
+
+    # Frame 0 is class 0 (ignored with noisy features), Frame 1 is class 1, Frame 2 is class 2
+    train_reps = torch.tensor(
+        [
+            [[999.0, -999.0], [1.0, 1.0], [10.0, 10.0]],
+            [[-888.0, 888.0], [1.0, 1.0], [10.0, 10.0]],
+        ],
+        dtype=torch.float32,
+    )
+    train_meta = [
+        {"frame_labels": [0, 1, 2]},
+        {"frame_labels": [0, 1, 2]},
+    ]
+    test_reps = torch.tensor(
+        [[[555.0, 555.0], [1.0, 1.0], [10.0, 10.0]]],
+        dtype=torch.float32,
+    )
+    test_meta = [{"frame_labels": [0, 1, 2]}]
+
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert res["accuracy"] == 1.0
+
+    info = task.examine_data(
+        SimpleDataset(train_meta, audio_length=30),
+        SimpleDataset(test_meta, audio_length=30),
+    )
+    assert info["num_classes"] == 2
+    assert "0" not in info["classes"]
+    assert info["train_frames"] == 4
+    assert info["test_frames"] == 2

@@ -197,11 +197,6 @@ def test_frame_regression_rejects_dict():
         )
 
 
-def test_frame_regression_invalid_pooling():
-    with pytest.raises(ValueError, match="Unknown pooling"):
-        FrameRegressionTask(regressor=LinearBenchmarkRegressor(), pooling="unsupported")
-
-
 def test_benchmark_runner_with_frame_regression(tmp_path):
     train_dataset = DummyAudioDataset(num_samples=8, audio_length=320, num_classes=2)
     test_dataset = DummyAudioDataset(num_samples=4, audio_length=320, num_classes=2)
@@ -249,3 +244,29 @@ def test_frame_regression_none_or_missing_regressor_raises():
         FrameRegressionTask(regressor=None)
     with pytest.raises(TypeError):
         FrameRegressionTask()
+
+
+def test_frame_regression_slices_to_rep_length():
+    """Verify trailing padded frames beyond rep_length are ignored before interpolation."""
+    task = FrameRegressionTask(regressor=KNNBenchmarkRegressor(n_neighbors=1))
+
+    train_reps = torch.tensor(
+        [
+            [[1.0, 1.0], [5.0, 5.0], [999.0, 999.0], [999.0, 999.0]],
+            [[1.0, 1.0], [1.0, 1.0], [5.0, 5.0], [5.0, 5.0]],
+        ],
+        dtype=torch.float32,
+    )
+    train_meta = [
+        {"frame_targets": [1.0, 5.0], "rep_length": 2},
+        {"frame_targets": [1.0, 1.0, 5.0, 5.0], "rep_length": 4},
+    ]
+
+    test_reps = torch.tensor(
+        [[[1.0, 1.0], [5.0, 5.0], [-999.0, -999.0], [999.0, 999.0]]],
+        dtype=torch.float32,
+    )
+    test_meta = [{"frame_targets": [1.0, 5.0], "rep_length": 2}]
+
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert res["mse"] == pytest.approx(0.0, abs=1e-6)

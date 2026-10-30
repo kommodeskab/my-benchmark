@@ -30,7 +30,6 @@ class GlobalClassificationTask(BaseTask):
         name: str = "global_classification",
         label_key: str = "label",
         pooling: str = "mean",
-        metric: str = "accuracy",
     ):
         """Initialize the GlobalClassificationTask.
 
@@ -39,22 +38,22 @@ class GlobalClassificationTask(BaseTask):
             name: Identifier for the task.
             label_key: Key in the sample metadata dictionary containing the target label.
             pooling: Temporal pooling strategy: 'mean', 'max', 'first', 'last'.
-            metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
+
+        Raises:
+            TypeError: If classifier is not an instance of BaseClassifier.
         """
         super().__init__(name=name)
-        valid_metrics = ("accuracy", "macro_f1", "micro_f1")
-        if metric not in valid_metrics:
-            raise ValueError(
-                f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
-            )
-        self.metric = metric
-        self.label_key = label_key
         if not isinstance(classifier, BaseClassifier):
             raise TypeError(
                 f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
             )
+
         self.classifier = classifier
+        self.label_key = label_key
         self.pooling = pooling
+        self.metric = "accuracy"
+        self.m_min = 0.0
+        self.m_max = 1.0
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that the dataset metadata contains the expected label_key."""
@@ -63,6 +62,30 @@ class GlobalClassificationTask(BaseTask):
     def pool_representations(self, representations: torch.Tensor) -> torch.Tensor:
         """Pool sequence representations (N, T', C') into clip-level features (N, C')."""
         return self.apply_pooling(representations, self.pooling)
+
+    def _extract_split_labels(
+        self,
+        representations: Any,
+        metadata: list[dict[str, Any]],
+        split_name: str,
+    ) -> list[Any]:
+        """Validate split lengths and extract labels from metadata."""
+        if len(representations) != len(metadata):
+            raise TaskError(
+                f"Length mismatch: {len(representations)} {split_name} representations vs "
+                f"{len(metadata)} {split_name} metadata entries."
+            )
+        if len(representations) == 0:
+            raise TaskError(f"No {split_name} representations provided for evaluation.")
+
+        labels: list[Any] = []
+        for idx, meta in enumerate(metadata):
+            if self.label_key not in meta:
+                raise InvalidDatasetError(
+                    f"{split_name.capitalize()} sample at index {idx} metadata does not contain label key '{self.label_key}'."
+                )
+            labels.append(meta[self.label_key])
+        return labels
 
     def evaluate(
         self,
@@ -82,51 +105,25 @@ class GlobalClassificationTask(BaseTask):
         Returns:
             dict[str, Any]: Dictionary of evaluation results.
         """
-        if len(train_representations) != len(train_metadata):
-            raise TaskError(
-                f"Length mismatch: {len(train_representations)} train representations vs {len(train_metadata)} train metadata entries."
-            )
-        if len(test_representations) != len(test_metadata):
-            raise TaskError(
-                f"Length mismatch: {len(test_representations)} test representations vs {len(test_metadata)} test metadata entries."
-            )
-        if len(train_representations) == 0:
-            raise TaskError("No train representations provided for evaluation.")
-        if len(test_representations) == 0:
-            raise TaskError("No test representations provided for evaluation.")
-
-        raw_train_labels = []
-        for i, meta in enumerate(train_metadata):
-            if self.label_key not in meta:
-                raise InvalidDatasetError(
-                    f"Train sample at index {i} metadata does not contain label key '{self.label_key}'."
-                )
-            raw_train_labels.append(meta[self.label_key])
-
-        raw_test_labels = []
-        for i, meta in enumerate(test_metadata):
-            if self.label_key not in meta:
-                raise InvalidDatasetError(
-                    f"Test sample at index {i} metadata does not contain label key '{self.label_key}'."
-                )
-            raw_test_labels.append(meta[self.label_key])
+        raw_train_labels = self._extract_split_labels(
+            train_representations, train_metadata, "train"
+        )
+        raw_test_labels = self._extract_split_labels(
+            test_representations, test_metadata, "test"
+        )
 
         encoder = LabelEncoder()
-        encoder.fit(list(raw_train_labels) + list(raw_test_labels))
-        y_train = torch.as_tensor(encoder.transform(raw_train_labels), dtype=torch.long)
-        y_test = torch.as_tensor(encoder.transform(raw_test_labels), dtype=torch.long)
+        encoder.fit(raw_train_labels + raw_test_labels)
         num_classes = len(encoder.classes_)
-
         if num_classes < 2:
             raise TaskError(
                 f"Global classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        classifier_inst = self.classifier
-        classifier_name = classifier_inst.__class__.__name__
+        y_train = torch.as_tensor(encoder.transform(raw_train_labels), dtype=torch.long)
+        y_test = torch.as_tensor(encoder.transform(raw_test_labels), dtype=torch.long)
 
-        is_sequence_probe = getattr(classifier_inst, "accepts_sequence", False)
-        if is_sequence_probe:
+        if getattr(self.classifier, "accepts_sequence", False):
             X_train = train_representations
             X_test = test_representations
             pooling_name = "none (transformer)"
@@ -136,25 +133,25 @@ class GlobalClassificationTask(BaseTask):
             pooling_name = self.pooling
 
         start_time = time.perf_counter()
-        classifier_inst.fit(X_train, y_train)
+        self.classifier.fit(X_train, y_train)
         training_time = float(time.perf_counter() - start_time)
 
-        metrics = classifier_inst.evaluate(X_test, y_test)
-        train_metrics = classifier_inst.evaluate(X_train, y_train)
+        metrics = self.classifier.evaluate(X_test, y_test)
+        train_metrics = self.classifier.evaluate(X_train, y_train)
+        value = float(metrics[self.metric])
 
-        results = {
+        return {
             "task": self.name,
-            "classifier": classifier_name,
+            "classifier": self.classifier.__class__.__name__,
             "pooling": pooling_name,
-            "value": float(metrics[self.metric]),
+            "value": value,
+            "normalized_value": self.normalize_metric(value, self.m_min, self.m_max),
             "accuracy": metrics["accuracy"],
             "macro_f1": metrics["macro_f1"],
             "micro_f1": metrics["micro_f1"],
             "train_accuracy": train_metrics["accuracy"],
             "training_time": training_time,
         }
-
-        return results
 
     def examine_data(
         self,
@@ -186,53 +183,36 @@ class GlobalClassificationTask(BaseTask):
             self.validate_dataset(testset)
 
         train_metadata = self.extract_metadata(dataset)
-        if testset is not None:
-            test_metadata = self.extract_metadata(testset)
-        else:
-            test_metadata = train_metadata
-
-        if len(train_metadata) == 0:
-            raise TaskError("Cannot examine an empty dataset.")
+        test_metadata = (
+            self.extract_metadata(testset) if testset is not None else train_metadata
+        )
 
         raw_train_labels = [m[self.label_key] for m in train_metadata]
         raw_test_labels = [m[self.label_key] for m in test_metadata]
 
         encoder = LabelEncoder()
-        encoder.fit(list(raw_train_labels) + list(raw_test_labels))
-        y_train = encoder.transform(raw_train_labels)
-        y_test = encoder.transform(raw_test_labels)
+        encoder.fit(raw_train_labels + raw_test_labels)
         classes = [str(c) for c in encoder.classes_]
         num_classes = len(classes)
-
         if num_classes < 2:
             raise TaskError(
                 f"Global classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        train_counts = Counter(y_train)
-        majority_encoded = train_counts.most_common(1)[0][0]
-        majority_class = str(encoder.classes_[majority_encoded])
+        train_counts = Counter(raw_train_labels)
+        majority_raw = train_counts.most_common(1)[0][0]
+        class_counts = {str(c): int(train_counts[c]) for c in encoder.classes_}
 
-        y_pred_baseline = np.full_like(y_test, majority_encoded)
-        baseline_acc = float(accuracy_score(y_test, y_pred_baseline))
+        y_test = encoder.transform(raw_test_labels)
+        y_pred_baseline = np.full_like(y_test, encoder.transform([majority_raw])[0])
+
+        baseline_accuracy = float(accuracy_score(y_test, y_pred_baseline))
         baseline_macro_f1 = float(
             f1_score(y_test, y_pred_baseline, average="macro", zero_division=0)
         )
         baseline_micro_f1 = float(
             f1_score(y_test, y_pred_baseline, average="micro", zero_division=0)
         )
-
-        if self.metric == "accuracy":
-            baseline_value = baseline_acc
-        elif self.metric == "macro_f1":
-            baseline_value = baseline_macro_f1
-        elif self.metric == "micro_f1":
-            baseline_value = baseline_micro_f1
-        else:
-            baseline_value = baseline_acc
-
-        all_counts = Counter(raw_train_labels)
-        class_counts = {str(c): int(all_counts[c]) for c in encoder.classes_}
 
         return {
             "task": self.name,
@@ -243,12 +223,15 @@ class GlobalClassificationTask(BaseTask):
             "num_classes": int(num_classes),
             "classes": classes,
             "class_counts": class_counts,
-            "majority_class": majority_class,
+            "majority_class": str(majority_raw),
             "baseline_strategy": "majority_class",
             "baseline_metric": self.metric,
-            "baseline_value": float(baseline_value),
-            "baseline_accuracy": baseline_acc,
+            "baseline_value": baseline_accuracy,
+            "baseline_normalized_value": self.normalize_metric(
+                baseline_accuracy, self.m_min, self.m_max
+            ),
+            "baseline_accuracy": baseline_accuracy,
             "baseline_macro_f1": baseline_macro_f1,
             "baseline_micro_f1": baseline_micro_f1,
-            "chance_level": float(1.0 / num_classes) if num_classes > 0 else 0.0,
+            "chance_level": float(1.0 / num_classes),
         }

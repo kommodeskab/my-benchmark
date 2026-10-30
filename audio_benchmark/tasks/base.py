@@ -81,6 +81,24 @@ class BaseTask(ABC):
         return [dataset[idx]["metadata"] for idx in range(len(dataset))]
 
     @staticmethod
+    def normalize_metric(value: float, m_min: float, m_max: float) -> float:
+        """Normalize a raw metric value to [0, 1] using theoretical worst/best bounds.
+
+        Computes M_hat = (M - M^min) / (M^max - M^min), clamped to [0.0, 1.0],
+        where M^min is the worst possible value and M^max is the best possible value.
+
+        Args:
+            value: Raw metric value M.
+            m_min: Worst possible metric bound M^min.
+            m_max: Best possible metric bound M^max.
+
+        Returns:
+            float: Normalized metric value in [0.0, 1.0].
+        """
+        normalized = (float(value) - m_min) / (m_max - m_min)
+        return float(min(max(normalized, 0.0), 1.0))
+
+    @staticmethod
     def apply_pooling(
         representations: torch.Tensor,
         pooling: str,

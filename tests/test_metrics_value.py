@@ -1,10 +1,11 @@
-"""Tests ensuring BenchmarkResult and all tasks always provide a 'value' metric."""
+"""Tests ensuring BenchmarkResult and all tasks always provide 'value' and 'normalized_value' metrics."""
 
 import pytest
 import torch
 
 from audio_benchmark import (
     AudioBenchmark,
+    BaseTask,
     BenchmarkResult,
     CTCSequenceProbe,
     DummyAudioDataset,
@@ -19,20 +20,33 @@ from audio_benchmark import (
 )
 
 
-def test_benchmark_result_value_property():
-    # 1. When 'value' is explicitly present
+def test_base_task_normalize_metric():
+    # Accuracy / R2 bounds (m_min=0.0, m_max=1.0)
+    assert BaseTask.normalize_metric(0.85, 0.0, 1.0) == pytest.approx(0.85)
+    assert BaseTask.normalize_metric(-0.5, 0.0, 1.0) == 0.0
+    assert BaseTask.normalize_metric(1.2, 0.0, 1.0) == 1.0
+
+    # Token Error Rate bounds (m_min=1.0, m_max=0.0)
+    assert BaseTask.normalize_metric(0.2, 1.0, 0.0) == pytest.approx(0.8)
+    assert BaseTask.normalize_metric(0.0, 1.0, 0.0) == 1.0
+    assert BaseTask.normalize_metric(1.5, 1.0, 0.0) == 0.0
+
+
+def test_benchmark_result_value_and_normalized_value_properties():
+    # 1. When 'value' and 'normalized_value' are explicitly present
     res = BenchmarkResult(
         model_name="model_a",
         dataset_name="dataset_a",
         task_name="classification",
-        metrics={"accuracy": 0.85, "value": 0.85},
+        metrics={"accuracy": 0.85, "value": 0.85, "normalized_value": 0.85},
         cached=False,
         representations_shape=(10, 20, 64),
     )
     assert res.metrics["value"] == 0.85
     assert res.value == 0.85
+    assert res.normalized_value == 0.85
 
-    # 2. When 'value' is missing, res.value returns None without guessing
+    # 2. When 'value' / 'normalized_value' are missing, properties return None without guessing
     res_inferred_acc = BenchmarkResult(
         model_name="model_a",
         dataset_name="dataset_a",
@@ -43,28 +57,7 @@ def test_benchmark_result_value_property():
     )
     assert "value" not in res_inferred_acc.metrics
     assert res_inferred_acc.value is None
-
-    res_inferred_r2 = BenchmarkResult(
-        model_name="model_b",
-        dataset_name="dataset_b",
-        task_name="regression",
-        metrics={"r2": 0.78, "mse": 0.05},
-        cached=False,
-        representations_shape=(10, 20, 64),
-    )
-    assert "value" not in res_inferred_r2.metrics
-    assert res_inferred_r2.value is None
-
-    res_inferred_seq = BenchmarkResult(
-        model_name="model_c",
-        dataset_name="dataset_c",
-        task_name="sequence_modeling",
-        metrics={"token_error_rate": 0.15, "sequence_accuracy": 0.80},
-        cached=False,
-        representations_shape=(10, 20, 64),
-    )
-    assert "value" not in res_inferred_seq.metrics
-    assert res_inferred_seq.value is None
+    assert res_inferred_acc.normalized_value is None
 
 
 def test_benchmark_result_print_summary_handles_value(capsys):
@@ -72,89 +65,76 @@ def test_benchmark_result_print_summary_handles_value(capsys):
         model_name="model_a",
         dataset_name="dataset_a",
         task_name="custom_task",
-        metrics={"custom_score": 0.95, "value": 0.95},
+        metrics={"custom_score": 0.95, "value": 0.95, "normalized_value": 0.95},
         cached=False,
         representations_shape=(10, 20, 64),
     )
     res.print_summary()
     captured = capsys.readouterr().out
     assert "Main Metric (value): 0.95" in captured
+    assert "Normalized Metric (normalized_value): 0.95" in captured
 
 
 def test_global_classification_task_value():
-    task_default = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
+    assert task.metric == "accuracy"
     train_reps = torch.randn(12, 4, 16)
     train_meta = [{"label": i % 3} for i in range(12)]
     test_reps = torch.randn(6, 4, 16)
     test_meta = [{"label": i % 3} for i in range(6)]
 
-    res_default = task_default.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_default
-    assert "accuracy" in res_default
-    assert res_default["value"] == res_default["accuracy"]
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert "value" in res
+    assert "normalized_value" in res
+    assert res["value"] == res["accuracy"]
+    assert res["normalized_value"] == pytest.approx(res["accuracy"])
+    assert 0.0 <= res["normalized_value"] <= 1.0
 
-    # Custom metric: macro_f1
-    task_custom = GlobalClassificationTask(
-        classifier=KNNBenchmarkClassifier(), metric="macro_f1"
-    )
-    res_custom = task_custom.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_custom
-    assert res_custom["value"] == res_custom["macro_f1"]
-
-    # Invalid metric
-    with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        GlobalClassificationTask(classifier=KNNBenchmarkClassifier(), metric="invalid")
+    with pytest.raises(TypeError):
+        GlobalClassificationTask(classifier=KNNBenchmarkClassifier(), metric="macro_f1")  # type: ignore[call-arg]
 
 
 def test_frame_classification_task_value():
-    task_default = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
+    task = FrameClassificationTask(classifier=KNNBenchmarkClassifier())
+    assert task.metric == "accuracy"
     train_reps = torch.randn(8, 4, 16)
     train_meta = [{"frame_labels": [i % 2] * 16} for i in range(8)]
     test_reps = torch.randn(4, 4, 16)
     test_meta = [{"frame_labels": [i % 2] * 16} for i in range(4)]
 
-    res_default = task_default.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_default
-    assert "accuracy" in res_default
-    assert res_default["value"] == res_default["accuracy"]
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert "value" in res
+    assert "normalized_value" in res
+    assert res["value"] == res["accuracy"]
+    assert res["normalized_value"] == pytest.approx(res["accuracy"])
+    assert 0.0 <= res["normalized_value"] <= 1.0
 
-    # Custom metric: macro_f1
-    task_custom = FrameClassificationTask(
-        classifier=KNNBenchmarkClassifier(), metric="macro_f1"
-    )
-    res_custom = task_custom.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_custom
-    assert res_custom["value"] == res_custom["macro_f1"]
-
-    with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        FrameClassificationTask(classifier=KNNBenchmarkClassifier(), metric="invalid")
+    with pytest.raises(TypeError):
+        FrameClassificationTask(classifier=KNNBenchmarkClassifier(), metric="macro_f1")  # type: ignore[call-arg]
 
 
 def test_regression_task_value():
-    task_default = RegressionTask(regressor=LinearBenchmarkRegressor())
+    task = RegressionTask(regressor=LinearBenchmarkRegressor())
+    assert task.metric == "r2"
     train_reps = torch.randn(12, 4, 16)
     train_meta = [{"target": float(i * 0.5)} for i in range(12)]
     test_reps = torch.randn(6, 4, 16)
     test_meta = [{"target": float(i * 0.5)} for i in range(6)]
 
-    res_default = task_default.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_default
-    assert "r2" in res_default
-    assert res_default["value"] == res_default["r2"]
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert "value" in res
+    assert "normalized_value" in res
+    assert res["value"] == res["r2"]
+    assert res["normalized_value"] == pytest.approx(max(0.0, min(1.0, res["r2"])))
+    assert 0.0 <= res["normalized_value"] <= 1.0
 
-    # Custom metric: mse
-    task_custom = RegressionTask(regressor=LinearBenchmarkRegressor(), metric="mse")
-    res_custom = task_custom.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_custom
-    assert "mse" in res_custom
-    assert res_custom["value"] == res_custom["mse"]
-
-    with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        RegressionTask(regressor=LinearBenchmarkRegressor(), metric="invalid")
+    with pytest.raises(TypeError):
+        RegressionTask(regressor=LinearBenchmarkRegressor(), metric="mse")  # type: ignore[call-arg]
 
 
 def test_frame_regression_task_value():
-    task_default = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
+    task = FrameRegressionTask(regressor=LinearBenchmarkRegressor())
+    assert task.metric == "r2"
     train_reps = torch.randn(8, 4, 16)
     train_meta = [
         {"frame_targets": [float(i + j * 0.1) for j in range(16)]} for i in range(8)
@@ -164,47 +144,39 @@ def test_frame_regression_task_value():
         {"frame_targets": [float(i + j * 0.1) for j in range(16)]} for i in range(4)
     ]
 
-    res_default = task_default.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_default
-    assert "r2" in res_default
-    assert res_default["value"] == res_default["r2"]
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert "value" in res
+    assert "normalized_value" in res
+    assert res["value"] == res["r2"]
+    assert res["normalized_value"] == pytest.approx(max(0.0, min(1.0, res["r2"])))
+    assert 0.0 <= res["normalized_value"] <= 1.0
 
-    # Custom metric: mae
-    task_custom = FrameRegressionTask(
-        regressor=LinearBenchmarkRegressor(), metric="mae"
-    )
-    res_custom = task_custom.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_custom
-    assert "mae" in res_custom
-    assert res_custom["value"] == res_custom["mae"]
-
-    with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        FrameRegressionTask(regressor=LinearBenchmarkRegressor(), metric="invalid")
+    with pytest.raises(TypeError):
+        FrameRegressionTask(regressor=LinearBenchmarkRegressor(), metric="mae")  # type: ignore[call-arg]
 
 
 def test_sequence_modeling_task_value():
-    task_default = SequenceModelingTask(probe=CTCSequenceProbe(epochs=1))
+    task = SequenceModelingTask(probe=CTCSequenceProbe(epochs=1))
+    assert task.metric == "token_error_rate"
     train_reps = torch.randn(8, 10, 16)
     train_meta = [{"tokens": [f"tok_{j}" for j in range(3)]} for i in range(8)]
     test_reps = torch.randn(4, 10, 16)
     test_meta = [{"tokens": [f"tok_{j}" for j in range(3)]} for i in range(4)]
 
-    res_default = task_default.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_default
-    assert "token_error_rate" in res_default
-    assert res_default["value"] == res_default["token_error_rate"]
-
-    # Custom metric: sequence_accuracy
-    task_custom = SequenceModelingTask(
-        probe=CTCSequenceProbe(epochs=1), metric="sequence_accuracy"
+    res = task.evaluate(train_reps, train_meta, test_reps, test_meta)
+    assert "value" in res
+    assert "normalized_value" in res
+    assert res["value"] == res["token_error_rate"]
+    assert res["normalized_value"] == pytest.approx(
+        max(0.0, min(1.0, 1.0 - res["token_error_rate"]))
     )
-    res_custom = task_custom.evaluate(train_reps, train_meta, test_reps, test_meta)
-    assert "value" in res_custom
-    assert "sequence_accuracy" in res_custom
-    assert res_custom["value"] == res_custom["sequence_accuracy"]
+    assert 0.0 <= res["normalized_value"] <= 1.0
 
-    with pytest.raises(ValueError, match="Unknown metric 'invalid'"):
-        SequenceModelingTask(probe=CTCSequenceProbe(epochs=1), metric="invalid")
+    with pytest.raises(TypeError):
+        SequenceModelingTask(
+            probe=CTCSequenceProbe(epochs=1),
+            metric="sequence_accuracy",  # type: ignore[call-arg]
+        )
 
 
 def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
@@ -226,8 +198,10 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
         model_name="test_model",
     )
     assert "value" in res_clf.metrics
+    assert "normalized_value" in res_clf.metrics
     assert res_clf.metrics["value"] == res_clf.metrics["accuracy"]
     assert res_clf.value == res_clf.metrics["accuracy"]
+    assert res_clf.normalized_value == res_clf.metrics["normalized_value"]
 
     # Regression
     benchmark_reg = AudioBenchmark(
@@ -243,5 +217,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
         model_name="test_model",
     )
     assert "value" in res_reg.metrics
+    assert "normalized_value" in res_reg.metrics
     assert res_reg.metrics["value"] == res_reg.metrics["r2"]
     assert res_reg.value == res_reg.metrics["r2"]
+    assert res_reg.normalized_value == res_reg.metrics["normalized_value"]

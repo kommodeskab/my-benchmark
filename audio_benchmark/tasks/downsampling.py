@@ -5,6 +5,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from audio_benchmark.exceptions import InvalidDatasetError
+
 
 def parse_frame_targets(
     raw_target: Any,
@@ -26,29 +28,22 @@ def parse_frame_targets(
         InvalidDatasetError: If raw_target is not a flat torch.Tensor or list,
             or if it is empty.
     """
-    from audio_benchmark.exceptions import InvalidDatasetError
-
     if isinstance(raw_target, torch.Tensor):
         if raw_target.ndim != 1:
             raise InvalidDatasetError(
                 f"Target tensor in '{key_name}' must be 1D (flat), got shape {tuple(raw_target.shape)}."
             )
-        if len(raw_target) == 0:
-            raise InvalidDatasetError(
-                f"Target tensor in '{key_name}' must not be empty (K >= 1)."
-            )
-        return raw_target.tolist()
+        raw_target = raw_target.tolist()
+    elif not isinstance(raw_target, list):
+        raise InvalidDatasetError(
+            f"Metadata key '{key_name}' must be a flat torch.Tensor or list, got {type(raw_target).__name__}."
+        )
 
-    if isinstance(raw_target, list):
-        if len(raw_target) == 0:
-            raise InvalidDatasetError(
-                f"Target sequence in '{key_name}' must not be empty (K >= 1)."
-            )
-        return raw_target
-
-    raise InvalidDatasetError(
-        f"Metadata key '{key_name}' must be a flat torch.Tensor or list, got {type(raw_target).__name__}."
-    )
+    if not raw_target:
+        raise InvalidDatasetError(
+            f"Target sequence in '{key_name}' must not be empty (K >= 1)."
+        )
+    return raw_target
 
 
 def align_features_to_targets(
@@ -76,24 +71,21 @@ def align_features_to_targets(
         raise TypeError(
             f"representations must be a torch.Tensor, got {type(representations).__name__}."
         )
-
     if representations.ndim != 2:
         raise ValueError(
             f"representations must have shape (T', C) with ndim=2, got shape {tuple(representations.shape)}."
         )
-
-    t_prime, _ = representations.shape
-    if t_prime == 0:
+    if representations.shape[0] == 0:
         raise ValueError("representations cannot have temporal length 0.")
-
     if not isinstance(target_len, int) or target_len <= 0:
         raise ValueError(f"target_len must be a positive integer, got {target_len!r}.")
 
-    if t_prime == target_len:
+    if representations.shape[0] == target_len:
         return representations
 
-    # representations: (T', C) -> (1, C, T')
-    x = representations.transpose(0, 1).unsqueeze(0)
-    aligned = F.interpolate(x, size=target_len, mode="linear", align_corners=False)
-    # (1, C, T) -> (T, C)
-    return aligned.squeeze(0).transpose(0, 1)
+    x = representations.T.unsqueeze(0)
+    return (
+        F.interpolate(x, size=target_len, mode="linear", align_corners=False)
+        .squeeze(0)
+        .T
+    )

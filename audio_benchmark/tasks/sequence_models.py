@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from audio_benchmark.utils import PositionalEncoding, resolve_device
@@ -28,23 +28,15 @@ def _pad_representation_batch(
             - lengths: List of unpadded sequence lengths T'_i.
             - memory_key_padding_mask: Boolean tensor of shape (B, max_T') where True indicates padded positions.
     """
+    if not reps:
+        return torch.empty(0), [], torch.empty((0, 0), dtype=torch.bool)
+
     lengths = [int(r.shape[0]) for r in reps]
-    max_len = max(lengths) if lengths else 0
-    batch_size = len(reps)
-
-    padded_reps = [
-        torch.nn.functional.pad(r, (0, 0, 0, max_len - r.shape[0]))
-        if r.shape[0] < max_len
-        else r
-        for r in reps
-    ]
-    stacked = torch.stack(padded_reps, dim=0)
-
-    memory_key_padding_mask = torch.zeros((batch_size, max_len), dtype=torch.bool)
-    for i, length in enumerate(lengths):
-        if length < max_len:
-            memory_key_padding_mask[i, length:] = True
-
+    max_len = max(lengths)
+    stacked = nn.utils.rnn.pad_sequence(list(reps), batch_first=True)
+    memory_key_padding_mask = torch.arange(max_len).unsqueeze(0) >= torch.tensor(
+        lengths
+    ).unsqueeze(1)
     return stacked, lengths, memory_key_padding_mask
 
 
@@ -101,8 +93,7 @@ class _TorchCTCProbe(nn.Module):
     ) -> list[list[int]]:
         self.eval()
         with torch.inference_mode():
-            logits = self.linear(x)
-            preds = logits.argmax(dim=-1).cpu().numpy()
+            preds = self.linear(x).argmax(dim=-1).cpu().numpy()
 
         decoded_batch: list[list[int]] = []
         for i, seq in enumerate(preds):
@@ -116,22 +107,6 @@ class _TorchCTCProbe(nn.Module):
                     prev_token = tok
             decoded_batch.append(collapsed)
         return decoded_batch
-
-
-class _PairDataset(Dataset):
-    """Dataset pairing representations with target token sequences."""
-
-    def __init__(
-        self, representations: Sequence[torch.Tensor], targets: list[list[int]]
-    ):
-        self.representations = representations
-        self.targets = targets
-
-    def __len__(self) -> int:
-        return len(self.representations)
-
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, list[int]]:
-        return self.representations[idx], self.targets[idx]
 
 
 def _collate_ctc_batch(
@@ -165,7 +140,6 @@ class CTCSequenceProbe(BaseSequenceProbe):
         self.epochs = epochs
         self.batch_size = batch_size
         self.lr = lr
-        self.device_str = device
         self.device = resolve_device(device)
         self.show_progress = show_progress
         self.model: _TorchCTCProbe | None = None
@@ -191,10 +165,10 @@ class CTCSequenceProbe(BaseSequenceProbe):
             self.device
         )
 
-        dataset = _PairDataset(X, targets)
+        pairs = list(zip(X, targets, strict=False))
         loader = DataLoader(
-            dataset,
-            batch_size=max(1, min(self.batch_size, len(dataset))),
+            pairs,  # type: ignore[arg-type]
+            batch_size=max(1, min(self.batch_size, len(pairs))),
             shuffle=True,
             collate_fn=_collate_ctc_batch,
         )
@@ -213,7 +187,6 @@ class CTCSequenceProbe(BaseSequenceProbe):
             total_loss = 0.0
             for batch_reps, rep_lengths, batch_targets in loader:
                 batch_reps = batch_reps.to(self.device)
-
                 shifted_targets = [[tok + 1 for tok in seq] for seq in batch_targets]
                 flat_targets = torch.tensor(
                     [tok for seq in shifted_targets for tok in seq],
@@ -250,8 +223,7 @@ class CTCSequenceProbe(BaseSequenceProbe):
         results: list[list[int]] = []
         step = max(1, self.batch_size)
         for start in range(0, len(X), step):
-            batch_slice = X[start : start + step]
-            padded_reps, lengths, _ = _pad_representation_batch(batch_slice)
+            padded_reps, lengths, _ = _pad_representation_batch(X[start : start + step])
             results.extend(
                 self.model.greedy_decode(padded_reps.to(self.device), lengths=lengths)
             )
@@ -281,11 +253,9 @@ class _TorchTransformerDecoder(nn.Module):
         self.total_tokens = vocab_size + self.NUM_SPECIAL
         self.d_model = d_model
 
-        if in_dim != d_model:
-            self.memory_proj = nn.Linear(in_dim, d_model)
-        else:
-            self.memory_proj = nn.Identity()
-
+        self.memory_proj = (
+            nn.Linear(in_dim, d_model) if in_dim != d_model else nn.Identity()
+        )
         self.token_embedding = nn.Embedding(
             self.total_tokens, d_model, padding_idx=self.PAD_ID
         )
@@ -309,10 +279,14 @@ class _TorchTransformerDecoder(nn.Module):
         tgt_key_padding_mask: torch.Tensor | None = None,
         memory_key_padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if tgt_mask is None:
+            tgt_mask = nn.Transformer.generate_square_subsequent_mask(
+                tgt.size(1), device=tgt.device, dtype=torch.bool
+            )
         proj_memory = self.memory_proj(memory)
-        tgt_embed = self.token_embedding(tgt) * math.sqrt(self.d_model)
-        tgt_embed = self.pos_encoder(tgt_embed)
-
+        tgt_embed = self.pos_encoder(
+            self.token_embedding(tgt) * math.sqrt(self.d_model)
+        )
         out = self.decoder(
             tgt=tgt_embed,
             memory=proj_memory,
@@ -332,7 +306,6 @@ class _TorchTransformerDecoder(nn.Module):
         device = memory.device
         batch_size = memory.size(0)
 
-        proj_memory = self.memory_proj(memory)
         generated = torch.full(
             (batch_size, 1), self.SOS_ID, dtype=torch.long, device=device
         )
@@ -340,50 +313,31 @@ class _TorchTransformerDecoder(nn.Module):
 
         with torch.inference_mode():
             for _ in range(max_len):
-                seq_len = generated.size(1)
-                tgt_mask = nn.Transformer.generate_square_subsequent_mask(
-                    seq_len, device=device, dtype=torch.bool
-                )
-                tgt_embed = self.token_embedding(generated) * math.sqrt(self.d_model)
-                tgt_embed = self.pos_encoder(tgt_embed)
-
-                out = self.decoder(
-                    tgt=tgt_embed,
-                    memory=proj_memory,
-                    tgt_mask=tgt_mask,
+                logits = self.forward(
+                    memory=memory,
+                    tgt=generated,
                     memory_key_padding_mask=memory_key_padding_mask,
                 )
-                next_logits = self.output_proj(out[:, -1, :])
-                next_tokens = next_logits.argmax(dim=-1)
-
+                next_tokens = logits[:, -1, :].argmax(dim=-1)
                 finished = finished | (next_tokens == self.EOS_ID)
                 generated = torch.cat([generated, next_tokens.unsqueeze(1)], dim=1)
-
                 if finished.all():
                     break
 
         decoded_batch: list[list[int]] = []
-        gen_np = generated.cpu().numpy()
-
-        for seq in gen_np:
+        for seq in generated.cpu().numpy():
             toks: list[int] = []
             for tok in seq[1:]:
                 if tok == self.EOS_ID:
                     break
-                if tok == self.PAD_ID:
-                    continue
-                toks.append(int(tok - self.NUM_SPECIAL))
+                if tok != self.PAD_ID:
+                    toks.append(int(tok - self.NUM_SPECIAL))
             decoded_batch.append(toks)
-
         return decoded_batch
 
 
 def _collate_transformer_batch(
     batch: list[tuple[torch.Tensor, list[int]]],
-    sos_id: int,
-    eos_id: int,
-    pad_id: int,
-    num_special: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Collate batch with padded representations, teacher-forcing inputs, targets, and padding masks."""
     reps, _, memory_padding_mask = _pad_representation_batch(
@@ -393,20 +347,22 @@ def _collate_transformer_batch(
 
     max_len = max(len(t) for t in targets) if targets else 0
     batch_size = len(batch)
+    pad_id = _TorchTransformerDecoder.PAD_ID
+    sos_id = _TorchTransformerDecoder.SOS_ID
+    eos_id = _TorchTransformerDecoder.EOS_ID
+    num_special = _TorchTransformerDecoder.NUM_SPECIAL
 
     dec_input = torch.full((batch_size, max_len + 1), pad_id, dtype=torch.long)
     dec_target = torch.full((batch_size, max_len + 1), pad_id, dtype=torch.long)
     padding_mask = torch.zeros((batch_size, max_len + 1), dtype=torch.bool)
 
     for i, seq in enumerate(targets):
-        shifted_seq = [tok + num_special for tok in seq]
+        shifted_seq = torch.tensor([tok + num_special for tok in seq], dtype=torch.long)
         seq_len = len(shifted_seq)
-
         dec_input[i, 0] = sos_id
         if seq_len > 0:
-            dec_input[i, 1 : seq_len + 1] = torch.tensor(shifted_seq, dtype=torch.long)
-
-        dec_target[i, :seq_len] = torch.tensor(shifted_seq, dtype=torch.long)
+            dec_input[i, 1 : seq_len + 1] = shifted_seq
+            dec_target[i, :seq_len] = shifted_seq
         dec_target[i, seq_len] = eos_id
         padding_mask[i, seq_len + 1 :] = True
 
@@ -450,7 +406,6 @@ class TransformerDecoderProbe(BaseSequenceProbe):
         self.epochs = epochs
         self.batch_size = batch_size
         self.lr = lr
-        self.device_str = device
         self.device = resolve_device(device)
         self.show_progress = show_progress
         self.model: _TorchTransformerDecoder | None = None
@@ -486,18 +441,12 @@ class TransformerDecoderProbe(BaseSequenceProbe):
         max_target_len = max(len(t) for t in targets) if targets else 0
         self.max_gen_len = max_target_len + 15
 
-        dataset = _PairDataset(X, targets)
+        pairs = list(zip(X, targets, strict=False))
         loader = DataLoader(
-            dataset,
-            batch_size=max(1, min(self.batch_size, len(dataset))),
+            pairs,  # type: ignore[arg-type]
+            batch_size=max(1, min(self.batch_size, len(pairs))),
             shuffle=True,
-            collate_fn=lambda b: _collate_transformer_batch(
-                b,
-                sos_id=_TorchTransformerDecoder.SOS_ID,
-                eos_id=_TorchTransformerDecoder.EOS_ID,
-                pad_id=_TorchTransformerDecoder.PAD_ID,
-                num_special=_TorchTransformerDecoder.NUM_SPECIAL,
-            ),
+            collate_fn=_collate_transformer_batch,
         )
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -519,27 +468,16 @@ class TransformerDecoderProbe(BaseSequenceProbe):
                 padding_mask,
                 memory_padding_mask,
             ) in loader:
-                batch_reps = batch_reps.to(self.device)
-                dec_in = dec_in.to(self.device)
-                dec_tgt = dec_tgt.to(self.device)
-                padding_mask = padding_mask.to(self.device)
-                memory_padding_mask = memory_padding_mask.to(self.device)
-
-                s_len = dec_in.size(1)
-                causal_mask = nn.Transformer.generate_square_subsequent_mask(
-                    s_len, device=self.device, dtype=torch.bool
-                )
-
                 optimizer.zero_grad()
                 logits = self.model(
-                    memory=batch_reps,
-                    tgt=dec_in,
-                    tgt_mask=causal_mask,
-                    tgt_key_padding_mask=padding_mask,
-                    memory_key_padding_mask=memory_padding_mask,
+                    memory=batch_reps.to(self.device),
+                    tgt=dec_in.to(self.device),
+                    tgt_key_padding_mask=padding_mask.to(self.device),
+                    memory_key_padding_mask=memory_padding_mask.to(self.device),
                 )
                 loss = criterion(
-                    logits.reshape(-1, self.model.total_tokens), dec_tgt.reshape(-1)
+                    logits.reshape(-1, self.model.total_tokens),
+                    dec_tgt.to(self.device).reshape(-1),
                 )
                 loss.backward()
                 optimizer.step()
@@ -564,8 +502,9 @@ class TransformerDecoderProbe(BaseSequenceProbe):
         results: list[list[int]] = []
         step = max(1, self.batch_size)
         for start in range(0, len(X), step):
-            batch_slice = X[start : start + step]
-            padded_reps, _, memory_padding_mask = _pad_representation_batch(batch_slice)
+            padded_reps, _, memory_padding_mask = _pad_representation_batch(
+                X[start : start + step]
+            )
             results.extend(
                 self.model.generate(
                     padded_reps.to(self.device),

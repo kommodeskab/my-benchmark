@@ -17,27 +17,15 @@ def levenshtein_distance(ref: Sequence[Any], hyp: Sequence[Any]) -> int:
     Returns:
         int: Total edit distance.
     """
-    n, m = len(ref), len(hyp)
-    if n == 0:
-        return m
-    if m == 0:
-        return n
-
-    # Dynamic programming with O(m) space
-    dp = list(range(m + 1))
-
-    for i in range(1, n + 1):
-        prev = dp[0]
-        dp[0] = i
-        for j in range(1, m + 1):
-            temp = dp[j]
-            if ref[i - 1] == hyp[j - 1]:
-                dp[j] = prev
-            else:
-                dp[j] = 1 + min(prev, dp[j], dp[j - 1])
-            prev = temp
-
-    return dp[m]
+    dp = list(range(len(hyp) + 1))
+    for i, r in enumerate(ref, start=1):
+        prev, dp[0] = dp[0], i
+        for j, h in enumerate(hyp, start=1):
+            prev, dp[j] = (
+                dp[j],
+                prev if r == h else 1 + min(prev, dp[j], dp[j - 1]),
+            )
+    return dp[-1]
 
 
 def compute_token_error_rate(
@@ -53,17 +41,14 @@ def compute_token_error_rate(
     Returns:
         tuple[float, float]: (token_error_rate, sequence_accuracy)
     """
-    total_errors = 0
-    total_ref_len = 0
-    exact_matches = 0
-
-    for ref, hyp in zip(references, hypotheses):
-        dist = levenshtein_distance(ref, hyp)
-        total_errors += dist
-        total_ref_len += len(ref)
-        if list(ref) == list(hyp):
-            exact_matches += 1
-
+    total_errors = sum(
+        levenshtein_distance(ref, hyp)
+        for ref, hyp in zip(references, hypotheses, strict=True)
+    )
+    total_ref_len = sum(len(ref) for ref in references)
+    exact_matches = sum(
+        list(ref) == list(hyp) for ref, hyp in zip(references, hypotheses, strict=True)
+    )
     ter = float(total_errors / max(1, total_ref_len))
     acc = float(exact_matches / max(1, len(references)))
     return ter, acc
@@ -77,17 +62,13 @@ class Vocabulary:
     """
 
     def __init__(self, sequences: Sequence[Sequence[Any]]):
-        unique_tokens = sorted({tok for seq in sequences for tok in seq})
-        self.token_to_id = {tok: idx for idx, tok in enumerate(unique_tokens)}
-        self.id_to_token = {idx: tok for tok, idx in self.token_to_id.items()}
+        self.tokens: list[Any] = sorted({tok for seq in sequences for tok in seq})
+        self.token_to_id: dict[Any, int] = {
+            tok: idx for idx, tok in enumerate(self.tokens)
+        }
 
     def __len__(self) -> int:
-        return len(self.token_to_id)
-
-    @property
-    def tokens(self) -> list[Any]:
-        """List of tokens ordered by token ID."""
-        return [self.id_to_token[i] for i in range(len(self.id_to_token))]
+        return len(self.tokens)
 
     def encode(self, sequence: Sequence[Any]) -> list[int]:
         """Convert a sequence of raw tokens to integer IDs.
@@ -109,4 +90,4 @@ class Vocabulary:
         Returns:
             list[Any]: List of corresponding original tokens.
         """
-        return [self.id_to_token[idx] for idx in indices if idx in self.id_to_token]
+        return [self.tokens[idx] for idx in indices if 0 <= idx < len(self.tokens)]

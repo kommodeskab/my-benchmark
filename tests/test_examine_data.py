@@ -58,7 +58,6 @@ def test_global_classification_examine_data():
 
     task = GlobalClassificationTask(
         classifier=KNNBenchmarkClassifier(),
-        metric="accuracy",
     )
     info = task.examine_data(ds_train, ds_test)
 
@@ -73,23 +72,22 @@ def test_global_classification_examine_data():
     assert info["baseline_strategy"] == "majority_class"
     assert info["baseline_metric"] == "accuracy"
     assert 0.0 <= info["baseline_value"] <= 1.0
+    assert info["baseline_normalized_value"] == pytest.approx(info["baseline_value"])
     assert info["baseline_accuracy"] == info["baseline_value"]
     assert info["chance_level"] == 0.5
 
 
-def test_global_classification_examine_data_custom_metric():
+def test_global_classification_examine_data_multiclass():
     train_samples = [{"label": f"c_{i % 3}"} for i in range(12)]
     test_samples = [{"label": f"c_{i % 3}"} for i in range(6)]
     ds_train = SimpleAudioDataset(train_samples)
     ds_test = SimpleAudioDataset(test_samples)
 
-    task = GlobalClassificationTask(
-        classifier=KNNBenchmarkClassifier(), metric="macro_f1"
-    )
+    task = GlobalClassificationTask(classifier=KNNBenchmarkClassifier())
     info = task.examine_data(ds_train, ds_test)
 
-    assert info["baseline_metric"] == "macro_f1"
-    assert info["baseline_value"] == info["baseline_macro_f1"]
+    assert info["baseline_metric"] == "accuracy"
+    assert info["baseline_value"] == info["baseline_accuracy"]
     assert info["num_classes"] == 3
     assert info["chance_level"] == pytest.approx(1.0 / 3.0)
 
@@ -116,7 +114,6 @@ def test_regression_examine_data():
 
     task = RegressionTask(
         regressor=LinearBenchmarkRegressor(),
-        metric="r2",
     )
     info = task.examine_data(ds_train, ds_test)
 
@@ -131,20 +128,22 @@ def test_regression_examine_data():
     assert info["baseline_strategy"] == "mean_predictor"
     assert info["baseline_metric"] == "r2"
     assert "baseline_value" in info
+    assert "baseline_normalized_value" in info
     assert "baseline_mse" in info
     assert "baseline_rmse" in info
     assert "baseline_mae" in info
 
 
-def test_regression_examine_data_custom_metric():
+def test_regression_examine_data_single_split():
     samples = [{"target": float(i)} for i in range(10)]
     ds = SimpleAudioDataset(samples)
 
-    task = RegressionTask(regressor=LinearBenchmarkRegressor(), metric="mse")
+    task = RegressionTask(regressor=LinearBenchmarkRegressor())
     info = task.examine_data(ds)
 
-    assert info["baseline_metric"] == "mse"
-    assert info["baseline_value"] == info["baseline_mse"]
+    assert info["baseline_metric"] == "r2"
+    assert info["baseline_value"] == info["baseline_r2"]
+    assert info["baseline_normalized_value"] == 0.0
 
 
 def test_regression_examine_data_invalid_target():
@@ -194,7 +193,6 @@ def test_frame_regression_examine_data():
 
     task = FrameRegressionTask(
         regressor=LinearBenchmarkRegressor(),
-        metric="mae",
     )
     info = task.examine_data(ds_train, ds_test)
 
@@ -207,8 +205,9 @@ def test_frame_regression_examine_data():
     assert info["train_frames"] == 40
     assert info["test_frames"] == 20
     assert info["baseline_strategy"] == "mean_predictor"
-    assert info["baseline_metric"] == "mae"
-    assert info["baseline_value"] == info["baseline_mae"]
+    assert info["baseline_metric"] == "r2"
+    assert info["baseline_value"] == info["baseline_r2"]
+    assert 0.0 <= info["baseline_normalized_value"] <= 1.0
 
 
 def test_sequence_modeling_examine_data():

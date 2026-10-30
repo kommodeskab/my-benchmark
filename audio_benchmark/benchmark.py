@@ -38,6 +38,11 @@ class BenchmarkResult:
         """Primary result metric value for the benchmark task."""
         return self.metrics.get("value")
 
+    @property
+    def normalized_value(self) -> Any:
+        """Normalized primary result metric value in [0, 1] for the benchmark task."""
+        return self.metrics.get("normalized_value")
+
     def print_summary(self) -> None:
         """Log a formatted summary table to stdout."""
         print("-------------------- Benchmark Results --------------------")
@@ -50,9 +55,15 @@ class BenchmarkResult:
             val = self.metrics["value"]
             val_str = f"{val:.4f}" if isinstance(val, float) else str(val)
             print(f"  Main Metric (value): {val_str}")
+        if "normalized_value" in self.metrics:
+            norm_val = self.metrics["normalized_value"]
+            norm_str = (
+                f"{norm_val:.4f}" if isinstance(norm_val, float) else str(norm_val)
+            )
+            print(f"  Normalized Metric (normalized_value): {norm_str}")
         print("  Metrics:")
         for k, v in self.metrics.items():
-            if k == "value":
+            if k in ("value", "normalized_value"):
                 continue
             if isinstance(v, float):
                 print(f"    {k:20s}: {v:.4f}")

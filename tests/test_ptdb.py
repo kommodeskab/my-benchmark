@@ -5,6 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from audio_benchmark import (
+    DummyAudioModel,
+    PTDBPitchClassificationBenchmark,
+    PTDBVoiceActivityClassificationBenchmark,
+)
 from audio_benchmark.classifiers import KNNBenchmarkClassifier
 from audio_benchmark.datasets import PTDBTUGDataset
 from audio_benchmark.regressors import LinearBenchmarkRegressor
@@ -198,3 +203,127 @@ class TestPTDBTUGDataset:
         )
         task_reg.validate_dataset(train_ds)
         task_reg.validate_dataset(val_ds)
+
+
+class TestPTDBPitchClassificationBenchmark:
+    """Tests for PTDBPitchClassificationBenchmark."""
+
+    def test_invalid_arguments_raise(self) -> None:
+        with pytest.raises(ValueError, match="max_size must be a positive integer"):
+            PTDBPitchClassificationBenchmark(max_size=0)
+
+        with pytest.raises(ValueError, match="max_size must be a positive integer"):
+            PTDBPitchClassificationBenchmark(max_size=-3)
+
+        with pytest.raises(TypeError, match="seed must be an integer"):
+            PTDBPitchClassificationBenchmark(seed="42")  # type: ignore[arg-type]
+
+    @patch("audio_benchmark.datasets.ptdb.load_dataset")
+    def test_benchmark_runs_with_variable_length_audio(
+        self, mock_load_dataset: MagicMock, tmp_path
+    ) -> None:
+        # Create samples with varying lengths (60, 80, 100 frames) at 48kHz
+        samples = []
+        for i in range(10):
+            sample_rate = 48000
+            stride_samples = 480
+            num_frames = 60 + (i % 3) * 20
+            audio_len = num_frames * stride_samples
+            f0_data = [
+                [110.0 + (f % 40) * 5.0, 1.0]
+                if 15 <= f <= num_frames - 15
+                else [0.0, 0.0]
+                for f in range(num_frames)
+            ]
+            samples.append(
+                {
+                    "mic_audio": {
+                        "array": [0.05 * ((f % 7) - 3) for f in range(audio_len)],
+                        "sampling_rate": sample_rate,
+                    },
+                    "f0_data": f0_data,
+                }
+            )
+        mock_ds = MagicMock()
+        mock_ds.__len__.return_value = len(samples)
+        mock_ds.__getitem__.side_effect = lambda idx: samples[idx]
+        mock_load_dataset.return_value = mock_ds
+
+        benchmark = PTDBPitchClassificationBenchmark(
+            max_size=4,
+            seed=42,
+            cache_dir=tmp_path,
+            enable_cache=False,
+        )
+
+        # Verify variable-length wrapping (length is None, resampled to 16kHz) and ignore_label=0
+        assert benchmark.dataset.length is None
+        assert benchmark.dataset.sample_rate == 16000
+        assert benchmark.task.ignore_label == 0
+
+        data_info = benchmark.task.examine_data(benchmark.dataset, benchmark.testset)
+        assert "0" not in data_info["classes"]
+
+        model = DummyAudioModel(representation_dim=16)
+        result = benchmark.run(
+            model=model,
+            model_name="dummy_ptdb_model",
+            batch_size=2,
+            device="cpu",
+            show_progress=False,
+        )
+
+        assert result.task_name == "frame_classification"
+        assert 0.0 <= result.metrics["accuracy"] <= 1.0
+        assert result.dataset_name == "PTDB-TUG train"
+        assert benchmark.testset_name == "PTDB-TUG val"
+
+
+class TestPTDBVoiceActivityClassificationBenchmark:
+    """Tests for PTDBVoiceActivityClassificationBenchmark."""
+
+    def test_invalid_arguments_raise(self) -> None:
+        with pytest.raises(ValueError, match="max_size must be a positive integer"):
+            PTDBVoiceActivityClassificationBenchmark(max_size=0)
+
+        with pytest.raises(ValueError, match="max_size must be a positive integer"):
+            PTDBVoiceActivityClassificationBenchmark(max_size=-3)
+
+        with pytest.raises(TypeError, match="seed must be an integer"):
+            PTDBVoiceActivityClassificationBenchmark(seed="42")  # type: ignore[arg-type]
+
+    @patch("audio_benchmark.datasets.ptdb.load_dataset")
+    def test_benchmark_runs_with_variable_length_audio(
+        self, mock_load_dataset: MagicMock, tmp_path
+    ) -> None:
+        mock_ds = _create_mock_hf_ptdb_dataset(size=10)
+        mock_load_dataset.return_value = mock_ds
+
+        benchmark = PTDBVoiceActivityClassificationBenchmark(
+            max_size=4,
+            seed=42,
+            cache_dir=tmp_path,
+            enable_cache=False,
+        )
+
+        assert benchmark.dataset.length is None
+        assert benchmark.dataset.sample_rate == 16000
+        assert benchmark.task.label_key == "voice_activity"
+        assert benchmark.task.ignore_label is None
+
+        data_info = benchmark.task.examine_data(benchmark.dataset, benchmark.testset)
+        assert data_info["num_classes"] == 2
+
+        model = DummyAudioModel(representation_dim=16)
+        result = benchmark.run(
+            model=model,
+            model_name="dummy_ptdb_vad_model",
+            batch_size=2,
+            device="cpu",
+            show_progress=False,
+        )
+
+        assert result.task_name == "frame_classification"
+        assert 0.0 <= result.metrics["accuracy"] <= 1.0
+        assert result.dataset_name == "PTDB-TUG train"
+        assert benchmark.testset_name == "PTDB-TUG val"

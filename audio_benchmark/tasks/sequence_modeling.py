@@ -12,9 +12,7 @@ from torch.utils.data import Dataset
 from audio_benchmark.dataset import parse_dataset_item, validate_dataset
 from audio_benchmark.exceptions import InvalidDatasetError, TaskError
 from audio_benchmark.tasks.base import BaseTask
-from audio_benchmark.tasks.sequence_models import (
-    BaseSequenceProbe,
-)
+from audio_benchmark.tasks.sequence_models import BaseSequenceProbe
 from audio_benchmark.tasks.sequence_utils import Vocabulary, compute_token_error_rate
 
 
@@ -28,7 +26,6 @@ class SequenceModelingTask(BaseTask):
         probe: Explicit instantiated probe model.
         name: Identifier for the task.
         target_key: Key in sample metadata containing the target token sequence.
-        metric: Primary metric for the task ('token_error_rate', 'sequence_accuracy').
     """
 
     def __init__(
@@ -36,7 +33,6 @@ class SequenceModelingTask(BaseTask):
         probe: BaseSequenceProbe,
         name: str = "sequence_modeling",
         target_key: str = "tokens",
-        metric: str = "token_error_rate",
     ):
         """Initialize the SequenceModelingTask.
 
@@ -44,21 +40,20 @@ class SequenceModelingTask(BaseTask):
             probe: Explicit instantiated BaseSequenceProbe instance.
             name: Identifier for the task.
             target_key: Key in sample metadata containing the target token sequence.
-            metric: Primary metric for the task ('token_error_rate', 'sequence_accuracy').
+
+        Raises:
+            TypeError: If probe is not an instance of BaseSequenceProbe.
         """
         super().__init__(name=name)
         if not isinstance(probe, BaseSequenceProbe):
             raise TypeError(
                 f"probe must be an instance of BaseSequenceProbe, got {type(probe).__name__}."
             )
-        valid_metrics = ("token_error_rate", "sequence_accuracy")
-        if metric not in valid_metrics:
-            raise ValueError(
-                f"Unknown metric '{metric}'. Supported metrics: {list(valid_metrics)}"
-            )
         self.probe = probe
         self.target_key = target_key
-        self.metric = metric
+        self.metric = "token_error_rate"
+        self.m_min = 1.0
+        self.m_max = 0.0
 
     def validate_dataset(self, dataset: Dataset) -> None:
         """Verify that dataset metadata contains non-empty target sequences.
@@ -80,6 +75,43 @@ class SequenceModelingTask(BaseTask):
                 f"Sample at index 0 has empty sequence for key '{self.target_key}'."
             )
 
+    def _extract_sequences(
+        self,
+        metadata: list[dict[str, Any]],
+        prefix: str = "Sample",
+    ) -> list[list[Any]]:
+        """Extract and validate token sequence lists from metadata."""
+        sequences: list[list[Any]] = []
+        for idx, meta in enumerate(metadata):
+            if self.target_key not in meta:
+                raise InvalidDatasetError(
+                    f"{prefix} at index {idx} metadata does not contain '{self.target_key}'."
+                )
+            seq = meta[self.target_key]
+            if not isinstance(seq, list):
+                raise InvalidDatasetError(
+                    f"Target for {prefix.lower()} {idx} must be a list of tokens, got {type(seq).__name__}."
+                )
+            sequences.append(seq)
+        return sequences
+
+    def _prepare_split(
+        self,
+        representations: torch.Tensor,
+        metadata: list[dict[str, Any]],
+        split_name: str,
+    ) -> tuple[list[torch.Tensor], list[list[Any]]]:
+        """Extract unpadded per-clip representations and token sequences for a split."""
+        prefix = f"{split_name.capitalize()} sample"
+        targets = self._extract_sequences(metadata, prefix=prefix)
+        reps = [
+            representations[
+                i, : int(meta.get("rep_length", representations.shape[1]))
+            ].to(torch.float32)
+            for i, meta in enumerate(metadata)
+        ]
+        return reps, targets
+
     def evaluate(
         self,
         train_representations: torch.Tensor,
@@ -98,31 +130,12 @@ class SequenceModelingTask(BaseTask):
         Returns:
             dict[str, Any]: Evaluation metrics dictionary.
         """
-        raw_train_targets = []
-        for idx, meta in enumerate(train_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Train sample at index {idx} metadata does not contain '{self.target_key}'."
-                )
-            seq = meta[self.target_key]
-            if not isinstance(seq, list):
-                raise InvalidDatasetError(
-                    f"Target for sample {idx} must be a list of tokens, got {type(seq).__name__}."
-                )
-            raw_train_targets.append(seq)
-
-        raw_test_targets = []
-        for idx, meta in enumerate(test_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Test sample at index {idx} metadata does not contain '{self.target_key}'."
-                )
-            seq = meta[self.target_key]
-            if not isinstance(seq, list):
-                raise InvalidDatasetError(
-                    f"Target for test sample {idx} must be a list of tokens, got {type(seq).__name__}."
-                )
-            raw_test_targets.append(seq)
+        train_reps, raw_train_targets = self._prepare_split(
+            train_representations, train_metadata, "train"
+        )
+        test_reps, raw_test_targets = self._prepare_split(
+            test_representations, test_metadata, "test"
+        )
 
         vocab = Vocabulary(raw_train_targets + raw_test_targets)
         vocab_size = len(vocab)
@@ -130,24 +143,6 @@ class SequenceModelingTask(BaseTask):
             raise TaskError("Target vocabulary is empty.")
 
         encoded_train_targets = [vocab.encode(seq) for seq in raw_train_targets]
-
-        train_lengths = [
-            int(meta.get("rep_length", train_representations.shape[1]))
-            for meta in train_metadata
-        ]
-        train_reps = [
-            train_representations[i, :length].to(torch.float32)
-            for i, length in enumerate(train_lengths)
-        ]
-
-        test_lengths = [
-            int(meta.get("rep_length", test_representations.shape[1]))
-            for meta in test_metadata
-        ]
-        test_reps = [
-            test_representations[i, :length].to(torch.float32)
-            for i, length in enumerate(test_lengths)
-        ]
 
         start_time = time.perf_counter()
         self.probe.fit(train_reps, encoded_train_targets, vocab_size=vocab_size)
@@ -157,14 +152,15 @@ class SequenceModelingTask(BaseTask):
         pred_tokens = [vocab.decode(ids) for ids in pred_id_sequences]
 
         ter, seq_acc = compute_token_error_rate(raw_test_targets, pred_tokens)
-        main_value = ter if self.metric == "token_error_rate" else seq_acc
+        value = float(ter)
 
         return {
             "task": self.name,
             "probe": type(self.probe).__name__,
             "token_error_rate": ter,
             "sequence_accuracy": seq_acc,
-            "value": main_value,
+            "value": value,
+            "normalized_value": self.normalize_metric(value, self.m_min, self.m_max),
             "main_metric": self.metric,
             "training_time": training_time,
         }
@@ -196,60 +192,30 @@ class SequenceModelingTask(BaseTask):
             self.validate_dataset(testset)
 
         train_metadata = self.extract_metadata(dataset)
-        if testset is not None:
-            test_metadata = self.extract_metadata(testset)
-        else:
-            test_metadata = train_metadata
+        test_metadata = (
+            self.extract_metadata(testset) if testset is not None else train_metadata
+        )
 
-        if len(train_metadata) == 0:
-            raise TaskError("Cannot examine an empty dataset.")
-
-        raw_train_targets = []
-        seq_lengths = []
-        for idx, meta in enumerate(train_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Sample at index {idx} metadata does not contain '{self.target_key}'."
-                )
-            seq = meta[self.target_key]
-            if not isinstance(seq, list):
-                raise InvalidDatasetError(
-                    f"Target for sample {idx} must be a list of tokens, got {type(seq).__name__}."
-                )
-            raw_train_targets.append(seq)
-            seq_lengths.append(len(seq))
-
-        raw_test_targets = []
-        for idx, meta in enumerate(test_metadata):
-            if self.target_key not in meta:
-                raise InvalidDatasetError(
-                    f"Sample at index {idx} metadata does not contain '{self.target_key}'."
-                )
-            seq = meta[self.target_key]
-            if not isinstance(seq, list):
-                raise InvalidDatasetError(
-                    f"Target for test sample {idx} must be a list of tokens, got {type(seq).__name__}."
-                )
-            raw_test_targets.append(seq)
-            seq_lengths.append(len(seq))
+        raw_train_targets = self._extract_sequences(train_metadata)
+        raw_test_targets = self._extract_sequences(test_metadata, prefix="Test sample")
+        all_targets = raw_train_targets + (
+            raw_test_targets if testset is not None else []
+        )
 
         vocab = Vocabulary(raw_train_targets + raw_test_targets)
         vocab_size = len(vocab)
         if vocab_size < 1:
             raise TaskError("Target vocabulary is empty.")
 
+        seq_lengths = [len(seq) for seq in all_targets]
         pred_empty = [[] for _ in raw_test_targets]
         baseline_ter, baseline_seq_acc = compute_token_error_rate(
             raw_test_targets, pred_empty
         )
-        baseline_value = (
-            baseline_ter if self.metric == "token_error_rate" else baseline_seq_acc
-        )
 
         return {
             "task": self.name,
-            "total_clips": len(train_metadata)
-            + (len(test_metadata) if testset is not None else 0),
+            "total_clips": len(all_targets),
             "train_clips": len(train_metadata),
             "test_clips": len(test_metadata) if testset is not None else 0,
             "vocab_size": int(vocab_size),
@@ -260,7 +226,10 @@ class SequenceModelingTask(BaseTask):
             "mean_sequence_length": float(np.mean(seq_lengths)),
             "baseline_strategy": "empty_sequence",
             "baseline_metric": self.metric,
-            "baseline_value": baseline_value,
+            "baseline_value": baseline_ter,
+            "baseline_normalized_value": self.normalize_metric(
+                baseline_ter, self.m_min, self.m_max
+            ),
             "baseline_token_error_rate": baseline_ter,
             "baseline_sequence_accuracy": baseline_seq_acc,
         }

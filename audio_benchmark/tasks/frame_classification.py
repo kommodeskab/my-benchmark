@@ -33,8 +33,7 @@ class FrameClassificationTask(BaseTask):
         classifier: BaseClassifier,
         name: str = "frame_classification",
         label_key: str = "frame_labels",
-        metric: str = "accuracy",
-        pooling: str = "linear",
+        ignore_label: Any | None = None,
     ):
         """Initialize the FrameClassificationTask.
 
@@ -42,41 +41,99 @@ class FrameClassificationTask(BaseTask):
             classifier: Downstream classifier instance conforming to BaseClassifier.
             name: Identifier for the task.
             label_key: Metadata key containing per-frame labels (flat torch.Tensor or list).
-            metric: Primary metric for the task ('accuracy', 'macro_f1', 'micro_f1').
-            pooling: Temporal alignment strategy ('linear' interpolation).
+            ignore_label: Optional label value to exclude from training and evaluation
+                (e.g. 0 for unvoiced/silence frames). Defaults to None.
+
+        Raises:
+            TypeError: If classifier is not an instance of BaseClassifier.
         """
         super().__init__(name=name)
-        valid_metrics = ("accuracy", "macro_f1", "micro_f1")
-        if metric not in valid_metrics:
-            raise ValueError(
-                f"Unknown metric '{metric}'. Supported metrics: {valid_metrics}"
-            )
-        valid_pooling = ("linear",)
-        if pooling not in valid_pooling:
-            raise ValueError(
-                f"Unknown pooling '{pooling}'. Supported pooling: {valid_pooling}"
-            )
-
-        self.metric = metric
-        self.label_key = label_key
-        self.pooling = pooling
-
         if not isinstance(classifier, BaseClassifier):
             raise TypeError(
                 f"classifier must be an instantiated BaseClassifier instance, got {type(classifier).__name__}."
             )
+
         self.classifier = classifier
+        self.label_key = label_key
+        self.ignore_label = ignore_label
+        self.metric = "accuracy"
+        self.m_min = 0.0
+        self.m_max = 1.0
 
     def validate_dataset(self, dataset: Dataset) -> None:
-        """Verify that dataset metadata contains valid per-frame labels."""
-        validate_dataset(dataset, required_metadata_keys=[self.label_key])
+        """Verify that dataset metadata contains valid per-frame labels.
 
+        Args:
+            dataset: PyTorch dataset to validate.
+        """
+        validate_dataset(dataset, required_metadata_keys=[self.label_key])
         parsed = parse_dataset_item(dataset[0])
-        labels = parsed["metadata"][self.label_key]
-        parse_frame_targets(
-            labels,
-            key_name=self.label_key,
-        )
+        parse_frame_targets(parsed["metadata"][self.label_key], key_name=self.label_key)
+
+    def _prepare_split(
+        self,
+        representations: Any,
+        metadata: list[dict[str, Any]],
+        split_name: str,
+    ) -> tuple[torch.Tensor, list[Any]]:
+        """Align representations to frame targets and filter ignored labels for a split."""
+        if len(representations) != len(metadata):
+            raise TaskError(
+                f"Length mismatch: {len(representations)} {split_name} representations vs "
+                f"{len(metadata)} {split_name} metadata entries."
+            )
+        if len(representations) == 0:
+            raise TaskError(f"No {split_name} representations provided for evaluation.")
+
+        aligned_list: list[torch.Tensor] = []
+        flat_labels: list[Any] = []
+        for idx, meta in enumerate(metadata):
+            if self.label_key not in meta:
+                raise InvalidDatasetError(
+                    f"{split_name.capitalize()} sample at index {idx} metadata does not contain '{self.label_key}'."
+                )
+            raw_labels = parse_frame_targets(
+                meta[self.label_key], key_name=self.label_key
+            )
+            clip_reps = representations[idx]
+            if "rep_length" in meta:
+                clip_reps = clip_reps[: int(meta["rep_length"])]
+            aligned_list.append(
+                align_features_to_targets(
+                    representations=clip_reps,
+                    target_len=len(raw_labels),
+                )
+            )
+            flat_labels.extend(raw_labels)
+
+        X = torch.cat(aligned_list, dim=0)
+        if self.ignore_label is not None:
+            mask = [lbl != self.ignore_label for lbl in flat_labels]
+            X = X[torch.tensor(mask, dtype=torch.bool)]
+            flat_labels = [
+                lbl for lbl, keep in zip(flat_labels, mask, strict=False) if keep
+            ]
+            if not flat_labels:
+                raise TaskError(
+                    f"No valid frames remaining after filtering ignore_label={self.ignore_label!r}."
+                )
+
+        return X, flat_labels
+
+    def _extract_filtered_labels(self, metadata: list[dict[str, Any]]) -> list[Any]:
+        """Extract flat frame labels from metadata, applying ignore_label if set."""
+        labels: list[Any] = []
+        for meta in metadata:
+            labels.extend(
+                parse_frame_targets(meta[self.label_key], key_name=self.label_key)
+            )
+        if self.ignore_label is not None:
+            labels = [lbl for lbl in labels if lbl != self.ignore_label]
+            if not labels:
+                raise TaskError(
+                    f"No valid frames remaining after filtering ignore_label={self.ignore_label!r}."
+                )
+        return labels
 
     def evaluate(
         self,
@@ -99,70 +156,16 @@ class FrameClassificationTask(BaseTask):
         Returns:
             dict[str, Any]: Frame-level classification metrics.
         """
-        if len(train_representations) != len(train_metadata):
-            raise TaskError(
-                f"Length mismatch: {len(train_representations)} train representations vs {len(train_metadata)} train metadata entries."
-            )
-        if len(test_representations) != len(test_metadata):
-            raise TaskError(
-                f"Length mismatch: {len(test_representations)} test representations vs {len(test_metadata)} test metadata entries."
-            )
-        if len(train_representations) == 0:
-            raise TaskError("No train representations provided for evaluation.")
-        if len(test_representations) == 0:
-            raise TaskError("No test representations provided for evaluation.")
-
-        train_aligned: list[torch.Tensor] = []
-        train_labels_list: list[list[Any]] = []
-        for idx, meta in enumerate(train_metadata):
-            if self.label_key not in meta:
-                raise InvalidDatasetError(
-                    f"Train sample at index {idx} metadata does not contain '{self.label_key}'."
-                )
-            raw_target = meta[self.label_key]
-            raw_labels = parse_frame_targets(
-                raw_target,
-                key_name=self.label_key,
-            )
-            clip_reps = train_representations[idx]
-            aligned = align_features_to_targets(
-                representations=clip_reps,
-                target_len=len(raw_labels),
-            )
-            train_aligned.append(aligned)
-            train_labels_list.append(raw_labels)
-
-        test_aligned: list[torch.Tensor] = []
-        test_labels_list: list[list[Any]] = []
-        for idx, meta in enumerate(test_metadata):
-            if self.label_key not in meta:
-                raise InvalidDatasetError(
-                    f"Test sample at index {idx} metadata does not contain '{self.label_key}'."
-                )
-            raw_target = meta[self.label_key]
-            raw_labels = parse_frame_targets(
-                raw_target,
-                key_name=self.label_key,
-            )
-            clip_reps = test_representations[idx]
-            aligned = align_features_to_targets(
-                representations=clip_reps,
-                target_len=len(raw_labels),
-            )
-            test_aligned.append(aligned)
-            test_labels_list.append(raw_labels)
-
-        X_train = torch.cat(train_aligned, dim=0)
-        X_test = torch.cat(test_aligned, dim=0)
-
-        train_flat = [lbl for sub in train_labels_list for lbl in sub]
-        test_flat = [lbl for sub in test_labels_list for lbl in sub]
-        all_labels = train_flat + test_flat
+        X_train, train_flat = self._prepare_split(
+            train_representations, train_metadata, "train"
+        )
+        X_test, test_flat = self._prepare_split(
+            test_representations, test_metadata, "test"
+        )
 
         encoder = LabelEncoder()
-        encoder.fit(all_labels)
+        encoder.fit(train_flat + test_flat)
         num_classes = len(encoder.classes_)
-
         if num_classes < 2:
             raise TaskError(
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
@@ -171,28 +174,25 @@ class FrameClassificationTask(BaseTask):
         y_train = torch.as_tensor(encoder.transform(train_flat), dtype=torch.long)
         y_test = torch.as_tensor(encoder.transform(test_flat), dtype=torch.long)
 
-        classifier_inst = self.classifier
-        classifier_name = classifier_inst.__class__.__name__
-
         start_time = time.perf_counter()
-        classifier_inst.fit(X_train, y_train)
+        self.classifier.fit(X_train, y_train)
         training_time = float(time.perf_counter() - start_time)
 
-        metrics = classifier_inst.evaluate(X_test, y_test)
-        train_metrics = classifier_inst.evaluate(X_train, y_train)
+        metrics = self.classifier.evaluate(X_test, y_test)
+        train_metrics = self.classifier.evaluate(X_train, y_train)
+        value = float(metrics[self.metric])
 
-        results = {
+        return {
             "task": self.name,
-            "classifier": classifier_name,
-            "value": float(metrics[self.metric]),
+            "classifier": self.classifier.__class__.__name__,
+            "value": value,
+            "normalized_value": self.normalize_metric(value, self.m_min, self.m_max),
             "accuracy": metrics["accuracy"],
             "macro_f1": metrics["macro_f1"],
             "micro_f1": metrics["micro_f1"],
             "train_accuracy": train_metrics["accuracy"],
             "training_time": training_time,
         }
-
-        return results
 
     def examine_data(
         self,
@@ -224,76 +224,44 @@ class FrameClassificationTask(BaseTask):
             self.validate_dataset(testset)
 
         train_metadata = self.extract_metadata(dataset)
-        if testset is not None:
-            test_metadata = self.extract_metadata(testset)
-        else:
-            test_metadata = train_metadata
+        test_metadata = (
+            self.extract_metadata(testset) if testset is not None else train_metadata
+        )
 
-        if len(train_metadata) == 0:
-            raise TaskError("Cannot examine an empty dataset.")
-
-        train_labels: list[Any] = []
-        for meta in train_metadata:
-            targets = parse_frame_targets(
-                meta[self.label_key],
-                key_name=self.label_key,
-            )
-            train_labels.extend(targets)
-
-        test_labels: list[Any] = []
-        for meta in test_metadata:
-            targets = parse_frame_targets(
-                meta[self.label_key],
-                key_name=self.label_key,
-            )
-            test_labels.extend(targets)
-
+        train_labels = self._extract_filtered_labels(train_metadata)
+        test_labels = self._extract_filtered_labels(test_metadata)
         all_labels = train_labels + (test_labels if testset is not None else [])
 
         encoder = LabelEncoder()
         encoder.fit(all_labels)
         classes = [str(c) for c in encoder.classes_]
         num_classes = len(classes)
-
         if num_classes < 2:
             raise TaskError(
                 f"Frame classification requires at least 2 distinct classes, but found {num_classes}."
             )
 
-        sample_targets = parse_frame_targets(
-            train_metadata[0][self.label_key],
-            key_name=self.label_key,
+        frame_len_sample = len(
+            parse_frame_targets(
+                train_metadata[0][self.label_key], key_name=self.label_key
+            )
         )
-        frame_len_sample = len(sample_targets) if train_metadata else 0
-
-        class_counts = {
-            str(c): int(count) for c, count in Counter(train_labels).items()
-        }
-
         train_counts = Counter(train_labels)
+        class_counts = {str(c): int(cnt) for c, cnt in train_counts.items()}
         majority_raw = train_counts.most_common(1)[0][0]
-        majority_class = str(majority_raw)
 
         y_test_encoded = encoder.transform(test_labels)
-        majority_encoded = encoder.transform([majority_raw])[0]
-        y_pred_baseline = np.full_like(y_test_encoded, majority_encoded)
+        y_pred_baseline = np.full_like(
+            y_test_encoded, encoder.transform([majority_raw])[0]
+        )
 
-        baseline_acc = float(accuracy_score(y_test_encoded, y_pred_baseline))
+        baseline_accuracy = float(accuracy_score(y_test_encoded, y_pred_baseline))
         baseline_macro_f1 = float(
             f1_score(y_test_encoded, y_pred_baseline, average="macro", zero_division=0)
         )
         baseline_micro_f1 = float(
             f1_score(y_test_encoded, y_pred_baseline, average="micro", zero_division=0)
         )
-
-        if self.metric == "accuracy":
-            baseline_value = baseline_acc
-        elif self.metric == "macro_f1":
-            baseline_value = baseline_macro_f1
-        elif self.metric == "micro_f1":
-            baseline_value = baseline_micro_f1
-        else:
-            baseline_value = baseline_acc
 
         return {
             "task": self.name,
@@ -309,12 +277,15 @@ class FrameClassificationTask(BaseTask):
             "num_classes": int(num_classes),
             "classes": classes,
             "class_counts": class_counts,
-            "majority_class": majority_class,
+            "majority_class": str(majority_raw),
             "baseline_strategy": "majority_class",
             "baseline_metric": self.metric,
-            "baseline_value": float(baseline_value),
-            "baseline_accuracy": baseline_acc,
+            "baseline_value": baseline_accuracy,
+            "baseline_normalized_value": self.normalize_metric(
+                baseline_accuracy, self.m_min, self.m_max
+            ),
+            "baseline_accuracy": baseline_accuracy,
             "baseline_macro_f1": baseline_macro_f1,
             "baseline_micro_f1": baseline_micro_f1,
-            "chance_level": float(1.0 / num_classes) if num_classes > 0 else 0.0,
+            "chance_level": float(1.0 / num_classes),
         }
