@@ -258,7 +258,7 @@ def test_audio_benchmark_end_to_end_extra_info(tmp_path, capsys):
     result = benchmark.run(
         model=model,
         model_name="test_model",
-    )
+    )[0]
 
     # Extra info populated from examine_data directly
     info = task.examine_data(dataset, testset)

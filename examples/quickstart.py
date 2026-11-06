@@ -44,7 +44,7 @@ def main():
 
     print("\nExecuting benchmark tasks...")
     # Step 1: Attain all results silently from benchmark.run()
-    result_global_clf = AudioBenchmark(
+    results_global_clf = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=GlobalClassificationTask(classifier=KNNBenchmarkClassifier()),
@@ -54,7 +54,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name, batch_size=16)
 
-    result_global_reg = AudioBenchmark(
+    results_global_reg = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=LinearBenchmarkRegressor()),
@@ -64,7 +64,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name)
 
-    result_global_clf_tf = AudioBenchmark(
+    results_global_clf_tf = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=GlobalClassificationTask(
@@ -76,7 +76,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name)
 
-    result_global_reg_tf = AudioBenchmark(
+    results_global_reg_tf = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=RegressionTask(regressor=TransformerBenchmarkRegressor(epochs=15)),
@@ -86,7 +86,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name)
 
-    result_frame_clf = AudioBenchmark(
+    results_frame_clf = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=FrameClassificationTask(classifier=KNNBenchmarkClassifier()),
@@ -96,7 +96,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name)
 
-    result_frame_reg = AudioBenchmark(
+    results_frame_reg = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=FrameRegressionTask(regressor=LinearBenchmarkRegressor()),
@@ -106,7 +106,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name)
 
-    result_seq_ctc = AudioBenchmark(
+    results_seq_ctc = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=SequenceModelingTask(probe=CTCSequenceProbe(epochs=15)),
@@ -116,7 +116,7 @@ def main():
         enable_cache=True,
     ).run(model=model, model_name=model_name)
 
-    result_seq_tf = AudioBenchmark(
+    results_seq_tf = AudioBenchmark(
         dataset=dataset,
         testset=testset,
         task=SequenceModelingTask(probe=TransformerDecoderProbe(epochs=15)),
@@ -129,44 +129,53 @@ def main():
 
     # Step 2: The user decides how and when to print the results
     print("=== Detailed Results (via result.print_summary()) ===")
-    all_results = [
-        result_global_clf,
-        result_global_clf_tf,
-        result_global_reg,
-        result_global_reg_tf,
-        result_frame_clf,
-        result_frame_reg,
-        result_seq_ctc,
-        result_seq_tf,
-    ]
+    all_results = (
+        results_global_clf
+        + results_global_clf_tf
+        + results_global_reg
+        + results_global_reg_tf
+        + results_frame_clf
+        + results_frame_reg
+        + results_seq_ctc
+        + results_seq_tf
+    )
     for result in all_results:
         result.print_summary()
 
-    # Step 3: Custom user-defined summary
-    print("\n=== User-Defined Summary Table ===")
+    # Step 3: Custom user-defined summary for primary representation (index 0)
+    print("\n=== User-Defined Summary Table (Primary Rep 0) ===")
+    r_g_clf = results_global_clf[0]
+    r_g_clf_tf = results_global_clf_tf[0]
+    r_g_reg = results_global_reg[0]
+    r_g_reg_tf = results_global_reg_tf[0]
+    r_f_clf = results_frame_clf[0]
+    r_f_reg = results_frame_reg[0]
+    r_s_ctc = results_seq_ctc[0]
+    r_s_tf = results_seq_tf[0]
+
     print(
-        f"1. Global Clf (KNN):           Acc: {result_global_clf.metrics['accuracy'] * 100:.1f}% | Train Time: {result_global_clf.metrics['training_time']:.4f}s (Cached: {result_global_clf.cached})"
+        f"1. Global Clf (KNN):           Acc: {r_g_clf.metrics['accuracy'] * 100:.1f}% | Train Time: {r_g_clf.metrics['training_time']:.4f}s (Cached: {r_g_clf.cached})"
     )
     print(
-        f"2. Global Clf (Transformer):   Acc: {result_global_clf_tf.metrics['accuracy'] * 100:.1f}% | Train Time: {result_global_clf_tf.metrics['training_time']:.4f}s (Cached: {result_global_clf_tf.cached})"
+        f"2. Global Clf (Transformer):   Acc: {r_g_clf_tf.metrics['accuracy'] * 100:.1f}% | Train Time: {r_g_clf_tf.metrics['training_time']:.4f}s (Cached: {r_g_clf_tf.cached})"
     )
     print(
-        f"3. Global Reg (Linear):        R²:  {result_global_reg.metrics['r2']:.4f} | Train Time: {result_global_reg.metrics['training_time']:.4f}s (Cached: {result_global_reg.cached})"
+        f"3. Global Reg (Linear):        R²:  {r_g_reg.metrics['r2']:.4f} | Train Time: {r_g_reg.metrics['training_time']:.4f}s (Cached: {r_g_reg.cached})"
     )
     print(
-        f"4. Global Reg (Transformer):   R²:  {result_global_reg_tf.metrics['r2']:.4f} | Train Time: {result_global_reg_tf.metrics['training_time']:.4f}s (Cached: {result_global_reg_tf.cached})"
+        f"4. Global Reg (Transformer):   R²:  {r_g_reg_tf.metrics['r2']:.4f} | Train Time: {r_g_reg_tf.metrics['training_time']:.4f}s (Cached: {r_g_reg_tf.cached})"
     )
     print(
-        f"5. Frame Clf (KNN):            Acc: {result_frame_clf.metrics['accuracy'] * 100:.1f}% | Train Time: {result_frame_clf.metrics['training_time']:.4f}s (Cached: {result_frame_clf.cached})"
+        f"5. Frame Clf (KNN):            Acc: {r_f_clf.metrics['accuracy'] * 100:.1f}% | Train Time: {r_f_clf.metrics['training_time']:.4f}s (Cached: {r_f_clf.cached})"
     )
     print(
-        f"6. Frame Reg (Linear):         R²:  {result_frame_reg.metrics['r2']:.4f} | Train Time: {result_frame_reg.metrics['training_time']:.4f}s (Cached: {result_frame_reg.cached})"
+        f"6. Frame Reg (Linear):         R²:  {r_f_reg.metrics['r2']:.4f} | Train Time: {r_f_reg.metrics['training_time']:.4f}s (Cached: {r_f_reg.cached})"
     )
     print(
-        f"7. Sequence (CTC):             TER: {result_seq_ctc.metrics['token_error_rate'] * 100:.1f}% | Train Time: {result_seq_ctc.metrics['training_time']:.4f}s (Cached: {result_seq_ctc.cached})"
+        f"7. Sequence (CTC):             TER: {r_s_ctc.metrics['token_error_rate'] * 100:.1f}% | Train Time: {r_s_ctc.metrics['training_time']:.4f}s (Cached: {r_s_ctc.cached})"
     )
     print(
-        f"8. Sequence (Transformer):     TER: {result_seq_tf.metrics['token_error_rate'] * 100:.1f}% | Train Time: {result_seq_tf.metrics['training_time']:.4f}s (Cached: {result_seq_tf.cached})"
+        f"8. Sequence (Transformer):     TER: {r_s_tf.metrics['token_error_rate'] * 100:.1f}% | Train Time: {r_s_tf.metrics['training_time']:.4f}s (Cached: {r_s_tf.cached})"
     )
 
     # Step 4: Instant key metric extraction across all tasks via metrics["value"]

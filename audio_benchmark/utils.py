@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 
 
@@ -31,16 +33,23 @@ class PositionalEncoding(torch.nn.Module):
 
     def __init__(self, d_model: int, max_len: int = 5000):
         super().__init__()
-        import math
+        self.register_buffer("pe", self._create_pe(max_len, d_model))
 
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+    @staticmethod
+    def _create_pe(
+        max_len: int, d_model: int, device: torch.device | None = None
+    ) -> torch.Tensor:
+        pe = torch.zeros(max_len, d_model, device=device)
+        position = torch.arange(0, max_len, dtype=torch.float, device=device).unsqueeze(
+            1
+        )
         div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+            torch.arange(0, d_model, 2, device=device).float()
+            * (-math.log(10000.0) / d_model)
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer("pe", pe.unsqueeze(0))  # Shape (1, max_len, d_model)
+        return pe.unsqueeze(0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass adding positional encoding to input tensor.
@@ -51,6 +60,10 @@ class PositionalEncoding(torch.nn.Module):
         Returns:
             torch.Tensor: Position-encoded tensor of shape (B, T, d_model).
         """
+        if x.size(1) > self.pe.size(1):
+            new_len = max(x.size(1), self.pe.size(1) * 2)
+            self.pe = self._create_pe(new_len, self.pe.size(-1), x.device)
+
         return x + self.pe[:, : x.size(1), :]
 
 

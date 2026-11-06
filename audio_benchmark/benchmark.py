@@ -1,5 +1,6 @@
 """Main Audio Representation Benchmark suite runner."""
 
+import copy
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ import torch
 from torch.utils.data import Dataset
 
 from audio_benchmark.cache import RepresentationCache
+from audio_benchmark.exceptions import InvalidModelOutputError
 from audio_benchmark.extractor import extract_representations
 from audio_benchmark.tasks.base import BaseTask
 
@@ -23,7 +25,8 @@ class BenchmarkResult:
         task_name: Identifier of the executed benchmark task.
         metrics: Dictionary of metric names and numeric results.
         cached: Whether representations were retrieved from cache.
-        representations_shape: Shape tuple of the extracted representations (N, T', C').
+        representations_shape: Shape tuple of the extracted representations (N, T_i, D_i).
+        representation_index: Index of the evaluated representation in the model's output list.
     """
 
     model_name: str
@@ -32,6 +35,7 @@ class BenchmarkResult:
     metrics: dict[str, Any]
     cached: bool
     representations_shape: tuple[int, ...]
+    representation_index: int = 0
 
     @property
     def value(self) -> Any:
@@ -49,6 +53,7 @@ class BenchmarkResult:
         print(f"  Model:           {self.model_name}")
         print(f"  Dataset:         {self.dataset_name}")
         print(f"  Task:            {self.task_name}")
+        print(f"  Rep Index:       {self.representation_index}")
         print(f"  Cached Reps:     {self.cached}")
         print(f"  Rep Shape:       {self.representations_shape}")
         if "value" in self.metrics:
@@ -150,7 +155,7 @@ class AudioBenchmark:
         device: str | torch.device,
         force_recompute: bool,
         show_progress: bool,
-    ) -> tuple[torch.Tensor, list[dict[str, Any]], bool]:
+    ) -> tuple[list[torch.Tensor], list[dict[str, Any]], bool]:
         """Load or extract representations for a dataset."""
         cached = False
         if (
@@ -183,7 +188,9 @@ class AudioBenchmark:
                     model_name=model_name,
                     dataset_name=resolved_name,
                     metadata=metadata,
-                    representations_shape=tuple(representations.shape),
+                    representations_shapes=[
+                        tuple(rep.shape) for rep in representations
+                    ],
                 )
             else:
                 representations, metadata = extract_representations(
@@ -196,6 +203,32 @@ class AudioBenchmark:
                 )
         return representations, metadata, cached
 
+    @staticmethod
+    def _prepare_metadata_for_rep(
+        metadata: list[dict[str, Any]],
+        rep_idx: int,
+        default_t: int,
+    ) -> list[dict[str, Any]]:
+        """Slice metadata rep_length for a specific representation index.
+
+        Args:
+            metadata: List of metadata dictionaries for the dataset.
+            rep_idx: Index of representation in the model's output list.
+            default_t: Fallback temporal sequence length if rep_length is missing.
+
+        Returns:
+            list[dict[str, Any]]: Shallow-copied metadata list with rep_length set for rep_idx.
+        """
+        prepared: list[dict[str, Any]] = []
+        for meta in metadata:
+            meta_copy = dict(meta)
+            if "rep_lengths" in meta and rep_idx < len(meta["rep_lengths"]):
+                meta_copy["rep_length"] = meta["rep_lengths"][rep_idx]
+            elif "rep_length" not in meta_copy:
+                meta_copy["rep_length"] = default_t
+            prepared.append(meta_copy)
+        return prepared
+
     def run(
         self,
         model: torch.nn.Module,
@@ -204,11 +237,11 @@ class AudioBenchmark:
         device: str | torch.device = "auto",
         force_recompute: bool = False,
         show_progress: bool = True,
-    ) -> BenchmarkResult:
+    ) -> list[BenchmarkResult]:
         """Run representation extraction and benchmark evaluation for a model on train and test datasets.
 
         Args:
-            model: PyTorch representation learning model mapping (B, 1, T) to (B, T', C').
+            model: PyTorch representation learning model mapping (B, 1, T) to a list of (B, C_i, T_i).
             model_name: User-specified identifier for the representation model.
             batch_size: Batch size for representation extraction.
             device: Device to run representation model on ('auto', 'cpu', 'cuda', etc.).
@@ -216,10 +249,11 @@ class AudioBenchmark:
             show_progress: Whether to display a tqdm progress bar during feature extraction.
 
         Returns:
-            BenchmarkResult: The result containing metrics and metadata.
+            list[BenchmarkResult]: A list of benchmark results, one for each representation in the model output list.
 
         Raises:
             TypeError: If model is None.
+            InvalidModelOutputError: If number of representations differs between train and test splits.
         """
         if model is None:
             raise TypeError(
@@ -248,23 +282,43 @@ class AudioBenchmark:
             show_progress=show_progress,
         )
 
+        if len(train_reps) != len(test_reps):
+            raise InvalidModelOutputError(
+                f"Number of train representations ({len(train_reps)}) does not match "
+                f"test representations ({len(test_reps)})."
+            )
+
         cached = train_cached and test_cached
+        results: list[BenchmarkResult] = []
 
-        metrics = self.task.evaluate(
-            train_representations=train_reps,
-            train_metadata=train_meta,
-            test_representations=test_reps,
-            test_metadata=test_meta,
-        )
+        for rep_idx in range(len(train_reps)):
+            train_meta_i = self._prepare_metadata_for_rep(
+                train_meta, rep_idx, train_reps[rep_idx].shape[1]
+            )
+            test_meta_i = self._prepare_metadata_for_rep(
+                test_meta, rep_idx, test_reps[rep_idx].shape[1]
+            )
 
-        return BenchmarkResult(
-            model_name=model_name,
-            dataset_name=self.resolved_dataset_name,
-            task_name=self.task.name,
-            metrics=metrics,
-            cached=cached,
-            representations_shape=tuple(train_reps.shape),
-        )
+            task_clone = copy.deepcopy(self.task)
+            metrics = task_clone.evaluate(
+                train_representations=train_reps[rep_idx],
+                train_metadata=train_meta_i,
+                test_representations=test_reps[rep_idx],
+                test_metadata=test_meta_i,
+            )
+
+            result = BenchmarkResult(
+                model_name=model_name,
+                dataset_name=self.resolved_dataset_name,
+                task_name=self.task.name,
+                metrics=metrics,
+                cached=cached,
+                representations_shape=tuple(train_reps[rep_idx].shape),
+                representation_index=rep_idx,
+            )
+            results.append(result)
+
+        return results
 
     def clear_cache(
         self, model_name: str | None = None, dataset_name: str | None = None

@@ -196,7 +196,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
     res_clf = benchmark_clf.run(
         model=model,
         model_name="test_model",
-    )
+    )[0]
     assert "value" in res_clf.metrics
     assert "normalized_value" in res_clf.metrics
     assert res_clf.metrics["value"] == res_clf.metrics["accuracy"]
@@ -215,7 +215,7 @@ def test_audio_benchmark_end_to_end_has_value_key(tmp_path):
     res_reg = benchmark_reg.run(
         model=model,
         model_name="test_model",
-    )
+    )[0]
     assert "value" in res_reg.metrics
     assert "normalized_value" in res_reg.metrics
     assert res_reg.metrics["value"] == res_reg.metrics["r2"]

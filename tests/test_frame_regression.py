@@ -212,13 +212,16 @@ def test_benchmark_runner_with_frame_regression(tmp_path):
         enable_cache=True,
     )
 
-    result = benchmark.run(
+    results = benchmark.run(
         model=model,
         model_name="dummy_frame_reg_model",
         batch_size=4,
         device="cpu",
     )
 
+    assert isinstance(results, list)
+    assert len(results) == 2
+    result = results[0]
     assert result.task_name == "frame_regression"
     assert "mse" in result.metrics
     assert "T_orig" not in result.metrics

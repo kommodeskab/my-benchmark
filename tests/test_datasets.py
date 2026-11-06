@@ -221,6 +221,19 @@ class TestSpeechCommandsDataset:
         item = wrapped[0]
         assert "label" in item["metadata"]
 
+    @patch("torchaudio.datasets.SPEECHCOMMANDS")
+    @patch("audio_benchmark.datasets.speechcommands.os.makedirs")
+    def test_default_data_dir_creates_data_directory(
+        self,
+        mock_makedirs: MagicMock,
+        mock_torchaudio_sc: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("DATA_PATH", raising=False)
+        mock_torchaudio_sc.return_value = _create_mock_torchaudio_speechcommands(size=1)
+        SpeechCommandsDataset(split="train", data_dir=None)
+        mock_makedirs.assert_called_once_with("./data", exist_ok=True)
+
 
 def _create_mock_hf_vctk_dataset(size: int = 4):
     samples = []

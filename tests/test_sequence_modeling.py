@@ -254,7 +254,7 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
         model=model,
         model_name="dummy_seq_model",
         device="cpu",
-    )
+    )[0]
     assert res_ctc.task_name == "sequence_modeling"
     assert "token_error_rate" in res_ctc.metrics
     assert "sequence_accuracy" in res_ctc.metrics
@@ -282,7 +282,7 @@ def test_benchmark_runner_with_sequence_tasks(tmp_path, capsys):
         model=model,
         model_name="dummy_seq_model",
         device="cpu",
-    )
+    )[0]
     assert res_tf.task_name == "sequence_modeling"
     assert "token_error_rate" in res_tf.metrics
     assert "sequence_accuracy" in res_tf.metrics

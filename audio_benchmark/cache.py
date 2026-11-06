@@ -22,7 +22,7 @@ class RepresentationCache:
 
     Storage structure:
     `cache_dir/<safe_model>/<safe_dataset>/`
-        - `representations.npy`: Memory-mapped NumPy array of shape (N, T', C').
+        - `representations_0.npy`, `representations_1.npy`, ...: Memory-mapped NumPy arrays of shape (N, T_i, D_i).
         - `metadata.pt`: PyTorch serialized list of metadata dicts.
         - `manifest.json`: JSON metadata with shapes, dtypes, and configuration info.
     """
@@ -44,23 +44,61 @@ class RepresentationCache:
         model_dir.mkdir(parents=True, exist_ok=True)
         return model_dir / safe_dataset
 
-    def get_memmap_path(self, model_name: str, dataset_name: str) -> Path:
-        """Get the filesystem path for the memory-mapped representations file."""
-        return self.get_cache_path(model_name, dataset_name) / "representations.npy"
+    def get_memmap_path(
+        self, model_name: str, dataset_name: str, representation_index: int = 0
+    ) -> Path:
+        """Get the filesystem path for a memory-mapped representation file at a given index.
+
+        Args:
+            model_name: Name of the representation learning model.
+            dataset_name: Name of the dataset.
+            representation_index: Index of the representation tensor in the list.
+
+        Returns:
+            Path: Path to the representations_{index}.npy file.
+        """
+        return (
+            self.get_cache_path(model_name, dataset_name)
+            / f"representations_{representation_index}.npy"
+        )
 
     def get_metadata_path(self, model_name: str, dataset_name: str) -> Path:
         """Get the filesystem path for the serialized metadata file."""
         return self.get_cache_path(model_name, dataset_name) / "metadata.pt"
 
+    def get_manifest_path(self, model_name: str, dataset_name: str) -> Path:
+        """Get the filesystem path for the manifest JSON file."""
+        return self.get_cache_path(model_name, dataset_name) / "manifest.json"
+
     def has(self, model_name: str, dataset_name: str) -> bool:
-        """Check if cached representations exist."""
-        memmap_file = self.get_memmap_path(model_name, dataset_name)
+        """Check if cached representations exist.
+
+        Args:
+            model_name: Name of the representation learning model.
+            dataset_name: Name of the dataset.
+
+        Returns:
+            bool: True if complete cached representations exist.
+        """
         metadata_file = self.get_metadata_path(model_name, dataset_name)
-        return memmap_file.is_file() and metadata_file.is_file()
+        manifest_file = self.get_manifest_path(model_name, dataset_name)
+        if not (metadata_file.is_file() and manifest_file.is_file()):
+            return False
+
+        try:
+            with open(manifest_file, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            num_reps = int(manifest.get("num_representations", 1))
+            for i in range(num_reps):
+                if not self.get_memmap_path(model_name, dataset_name, i).is_file():
+                    return False
+            return True
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
 
     def load(
         self, model_name: str, dataset_name: str
-    ) -> tuple[torch.Tensor, list[dict[str, Any]]]:
+    ) -> tuple[list[torch.Tensor], list[dict[str, Any]]]:
         """Load cached representations and metadata using memory-mapping.
 
         Args:
@@ -68,8 +106,9 @@ class RepresentationCache:
             dataset_name: Name of the dataset.
 
         Returns:
-            tuple[torch.Tensor, list[dict]]: (representations, metadata)
-                where representations is a memory-mapped tensor of shape (N, T', C').
+            tuple[list[torch.Tensor], list[dict[str, Any]]]:
+                - representations: List of memory-mapped tensors of shape (N, T_i, D_i).
+                - metadata: List of sample metadata dicts.
 
         Raises:
             FileNotFoundError: If no cache exists for the given model and dataset.
@@ -80,11 +119,18 @@ class RepresentationCache:
                 f"No cached representations found for model='{model_name}' and dataset='{dataset_name}' at {entry_dir}"
             )
 
-        memmap_file = self.get_memmap_path(model_name, dataset_name)
-        metadata_file = self.get_metadata_path(model_name, dataset_name)
+        manifest_file = self.get_manifest_path(model_name, dataset_name)
+        with open(manifest_file, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        num_reps = int(manifest.get("num_representations", 1))
 
-        mm = np.lib.format.open_memmap(memmap_file, mode="c")
-        representations = torch.from_numpy(mm)
+        representations: list[torch.Tensor] = []
+        for i in range(num_reps):
+            memmap_file = self.get_memmap_path(model_name, dataset_name, i)
+            mm = np.lib.format.open_memmap(memmap_file, mode="c")
+            representations.append(torch.from_numpy(mm))
+
+        metadata_file = self.get_metadata_path(model_name, dataset_name)
         metadata = torch.load(metadata_file, weights_only=False)
         return representations, metadata
 
@@ -92,7 +138,7 @@ class RepresentationCache:
         self,
         model_name: str,
         dataset_name: str,
-        representations: torch.Tensor,
+        representations: list[torch.Tensor],
         metadata: list[dict[str, Any]],
     ) -> Path:
         """Save representations and metadata to disk using memory-mapped format.
@@ -100,36 +146,47 @@ class RepresentationCache:
         Args:
             model_name: Name of the representation learning model.
             dataset_name: Name of the dataset.
-            representations: Tensor of shape (N, T', C').
+            representations: List of tensors of shape (N, T_i, D_i).
             metadata: List of metadata dicts corresponding to each sample.
 
         Returns:
             Path: The directory path of the saved cache entry.
+
+        Raises:
+            TypeError: If representations is not a list.
         """
+        if not isinstance(representations, list):
+            raise TypeError(
+                f"Expected representations to be a list of torch.Tensor, got {type(representations).__name__}."
+            )
+
         entry_dir = self.get_cache_path(model_name, dataset_name)
         temp_dir = entry_dir.with_name(f"{entry_dir.name}.tmp")
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-        mmap_path = temp_dir / "representations.npy"
-        reps_shape = tuple(representations.shape)
-        mm = np.lib.format.open_memmap(
-            mmap_path,
-            mode="w+",
-            dtype=np.float32,
-            shape=reps_shape,
-        )
-        mm[:] = representations.detach().cpu().numpy()
-        mm.flush()
-        del mm
+        shapes: list[tuple[int, ...]] = []
+        for i, rep in enumerate(representations):
+            mmap_path = temp_dir / f"representations_{i}.npy"
+            reps_shape = tuple(rep.shape)
+            shapes.append(reps_shape)
+            mm = np.lib.format.open_memmap(
+                mmap_path,
+                mode="w+",
+                dtype=np.float32,
+                shape=reps_shape,
+            )
+            mm[:] = rep.detach().cpu().numpy()
+            mm.flush()
+            del mm
 
         self.commit_temp_dir(
             temp_dir=temp_dir,
             model_name=model_name,
             dataset_name=dataset_name,
             metadata=metadata,
-            representations_shape=reps_shape,
+            representations_shapes=shapes,
         )
         return entry_dir
 
@@ -139,9 +196,20 @@ class RepresentationCache:
         model_name: str,
         dataset_name: str,
         metadata: list[dict[str, Any]],
-        representations_shape: tuple[int, ...],
+        representations_shapes: list[tuple[int, ...]],
     ) -> Path:
-        """Atomically commit a prepared temp directory to the permanent cache entry directory."""
+        """Atomically commit a prepared temp directory to the permanent cache entry directory.
+
+        Args:
+            temp_dir: Temporary directory containing the prepared memory-mapped files.
+            model_name: Name of the representation model.
+            dataset_name: Name of the dataset.
+            metadata: List of metadata dictionaries.
+            representations_shapes: List of shape tuples for each representation.
+
+        Returns:
+            Path: Path to the committed entry directory.
+        """
         entry_dir = self.get_cache_path(model_name, dataset_name)
 
         # Save metadata and manifest
@@ -150,8 +218,11 @@ class RepresentationCache:
         manifest = {
             "model_name": model_name,
             "dataset_name": dataset_name,
-            "num_samples": representations_shape[0],
-            "shape": list(representations_shape),
+            "num_samples": (
+                representations_shapes[0][0] if representations_shapes else 0
+            ),
+            "num_representations": len(representations_shapes),
+            "shapes": [list(s) for s in representations_shapes],
             "dtype": "float32",
             "storage_format": "memmap_npy",
         }

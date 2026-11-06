@@ -99,34 +99,37 @@ class DummyAudioDataset(Dataset):
 class DummyAudioModel(nn.Module):
     """Dummy representation learning model.
 
-    Maps 1D raw audio of shape (B, 1, T) to sequence representations
-    of shape (B, T', C') using 1D convolutional layers.
+    Maps 1D raw audio of shape (B, 1, T) to a list of sequence representations
+    of shape (B, C_i, T_i) with sequence length last using 1D convolutional layers.
 
     Args:
         in_channels: Number of input audio channels (default: 1 for mono).
-        representation_dim: Feature dimension C' of output representation sequence.
+        representation_dim: Feature dimension C_1 of final output representation sequence.
     """
 
     def __init__(self, in_channels: int = 1, representation_dim: int = 64):
         super().__init__()
         self.representation_dim = representation_dim
-        self.conv_layers = nn.Sequential(
-            nn.Conv1d(in_channels, 32, kernel_size=16, stride=8, padding=4),
+        self.conv1 = nn.Sequential(
+            nn.Conv1d(in_channels, 32, kernel_size=16, stride=16, padding=4),
             nn.ReLU(),
-            nn.Conv1d(32, representation_dim, kernel_size=8, stride=4, padding=2),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv1d(32, representation_dim, kernel_size=8, stride=2, padding=3),
             nn.ReLU(),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass.
 
         Args:
             x: Audio tensor of shape (B, 1, T).
 
         Returns:
-            torch.Tensor: Audio representations of shape (B, T', C').
+            list[torch.Tensor]: List of audio representations with sequence length last:
+                - Rep 0: shape (B, 32, T_0)
+                - Rep 1: shape (B, representation_dim, T_1)
         """
-        # x is (B, 1, T) -> conv_layers -> (B, C', T')
-        features = self.conv_layers(x)
-        # Transpose to (B, T', C') as required by benchmark specification
-        return features.transpose(1, 2)
+        feat1 = self.conv1(x)
+        feat2 = self.conv2(feat1)
+        return [feat1, feat2]

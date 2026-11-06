@@ -97,7 +97,7 @@ class TestSpeechCommandsClassificationBenchmark:
         model = DummyAudioModel(representation_dim=32)
         res = benchmark.run(
             model=model, model_name="dummy", batch_size=4, show_progress=False
-        )
+        )[0]
         assert "accuracy" in res.metrics
 
     @patch("audio_benchmark.benchmarks.speech_commands.SpeechCommandsDataset")
@@ -184,7 +184,7 @@ class TestCREMADClassificationBenchmark:
         model = DummyAudioModel(representation_dim=32)
         res = benchmark.run(
             model=model, model_name="dummy", batch_size=4, show_progress=False
-        )
+        )[0]
         assert "accuracy" in res.metrics
 
     @patch("audio_benchmark.benchmarks.cremad.CREMADDataset")
@@ -242,7 +242,7 @@ class TestTIMITSpeechDurationRegressionBenchmark:
         model = DummyAudioModel(representation_dim=32)
         res = benchmark.run(
             model=model, model_name="dummy", batch_size=4, show_progress=False
-        )
+        )[0]
         assert "r2" in res.metrics or "value" in res.metrics
 
     @patch("audio_benchmark.benchmarks.timit.TIMITDataset")
@@ -301,7 +301,7 @@ class TestVCTKGenderClassificationBenchmark:
         model = DummyAudioModel(representation_dim=32)
         res = benchmark.run(
             model=model, model_name="dummy", batch_size=4, show_progress=False
-        )
+        )[0]
         assert "accuracy" in res.metrics
 
     @patch("audio_benchmark.benchmarks.vctk.VCTKDataset")
@@ -361,7 +361,7 @@ class TestTIMITPhonemeSequenceModelingBenchmark:
         model = DummyAudioModel(representation_dim=16)
         res = benchmark.run(
             model=model, model_name="dummy", batch_size=2, show_progress=False
-        )
+        )[0]
         assert "token_error_rate" in res.metrics or "value" in res.metrics
 
     @patch("audio_benchmark.benchmarks.timit_phonemes.TIMITDataset")
@@ -421,7 +421,7 @@ class TestTIMITTextSequenceModelingBenchmark:
         model = DummyAudioModel(representation_dim=16)
         res = benchmark.run(
             model=model, model_name="dummy", batch_size=2, show_progress=False
-        )
+        )[0]
         assert "token_error_rate" in res.metrics or "value" in res.metrics
 
     @patch("audio_benchmark.benchmarks.timit_text.TIMITDataset")

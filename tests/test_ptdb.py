@@ -271,7 +271,7 @@ class TestPTDBPitchClassificationBenchmark:
             batch_size=2,
             device="cpu",
             show_progress=False,
-        )
+        )[0]
 
         assert result.task_name == "frame_classification"
         assert 0.0 <= result.metrics["accuracy"] <= 1.0
@@ -321,7 +321,7 @@ class TestPTDBVoiceActivityClassificationBenchmark:
             batch_size=2,
             device="cpu",
             show_progress=False,
-        )
+        )[0]
 
         assert result.task_name == "frame_classification"
         assert 0.0 <= result.metrics["accuracy"] <= 1.0

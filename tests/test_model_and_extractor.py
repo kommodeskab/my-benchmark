@@ -9,18 +9,32 @@ from audio_benchmark.exceptions import InvalidModelError, InvalidModelOutputErro
 from audio_benchmark.extractor import extract_representations
 
 
-class Invalid2DModel(nn.Module):
-    """Outputs (B, C) instead of required (B, T', C')."""
+class BareTensorModel(nn.Module):
+    """Outputs a bare torch.Tensor instead of required list of tensors."""
 
     def forward(self, x):
-        return torch.randn(x.shape[0], 64)
+        return torch.randn(x.shape[0], 10, 64)
+
+
+class EmptyListModel(nn.Module):
+    """Outputs an empty list."""
+
+    def forward(self, x):
+        return []
+
+
+class Invalid2DModel(nn.Module):
+    """Outputs (B, C) inside list instead of required (B, T', C')."""
+
+    def forward(self, x):
+        return [torch.randn(x.shape[0], 64)]
 
 
 class InvalidBatchModel(nn.Module):
-    """Returns wrong batch dimension."""
+    """Returns wrong batch dimension inside list."""
 
     def forward(self, x):
-        return torch.randn(1, 10, 64)
+        return [torch.randn(1, 10, 64)]
 
 
 def test_dummy_model_shapes():
@@ -28,10 +42,17 @@ def test_dummy_model_shapes():
     dummy_input = torch.randn(2, 1, 320)
     output = model(dummy_input)
 
-    assert output.ndim == 3
-    assert output.shape[0] == 2
-    assert output.shape[2] == 32
-    assert output.shape[1] > 0
+    assert isinstance(output, list)
+    assert len(output) == 2
+    assert output[0].ndim == 3
+    assert output[0].shape[0] == 2
+    assert output[0].shape[1] == 32
+    assert output[0].shape[2] > 0
+
+    assert output[1].ndim == 3
+    assert output[1].shape[0] == 2
+    assert output[1].shape[1] == 32
+    assert output[1].shape[2] > 0
 
 
 def test_extract_representations_success():
@@ -45,11 +66,16 @@ def test_extract_representations_success():
         device="cpu",
     )
 
-    assert isinstance(representations, torch.Tensor)
-    assert representations.shape[0] == 6
-    assert representations.shape[2] == 16
+    assert isinstance(representations, list)
+    assert len(representations) == 2
+    assert representations[0].shape[0] == 6
+    assert representations[0].shape[2] == 32
+    assert representations[1].shape[0] == 6
+    assert representations[1].shape[2] == 16
     assert len(metadata) == 6
     assert metadata[0]["label"] in [0, 1]
+    assert "rep_lengths" in metadata[0]
+    assert len(metadata[0]["rep_lengths"]) == 2
 
 
 def test_extract_representations_rejects_non_module():
@@ -58,12 +84,32 @@ def test_extract_representations_rejects_non_module():
         extract_representations(model="not_a_model", dataset=dataset)
 
 
+def test_extract_representations_rejects_bare_tensor():
+    dataset = DummyAudioDataset(num_samples=4, audio_length=320)
+    bad_model = BareTensorModel()
+    with pytest.raises(
+        InvalidModelOutputError,
+        match="must return a list of torch.Tensor",
+    ):
+        extract_representations(model=bad_model, dataset=dataset, batch_size=2)
+
+
+def test_extract_representations_rejects_empty_list():
+    dataset = DummyAudioDataset(num_samples=4, audio_length=320)
+    bad_model = EmptyListModel()
+    with pytest.raises(
+        InvalidModelOutputError,
+        match="non-empty list",
+    ):
+        extract_representations(model=bad_model, dataset=dataset, batch_size=2)
+
+
 def test_extract_representations_rejects_invalid_output_dimensions():
     dataset = DummyAudioDataset(num_samples=4, audio_length=320)
     bad_model = Invalid2DModel()
     with pytest.raises(
         InvalidModelOutputError,
-        match="must be 3-dimensional with shape \\(B, T', C'\\)",
+        match="must be 3-dimensional with shape \\(B, C', T'\\)",
     ):
         extract_representations(model=bad_model, dataset=dataset, batch_size=2)
 
@@ -88,10 +134,14 @@ def test_extract_representations_streaming_mmap(tmp_path):
         mmap_path=mmap_file,
     )
 
-    assert mmap_file.is_file()
-    assert isinstance(reps, torch.Tensor)
-    assert reps.shape[0] == 8
-    assert reps.shape[2] == 16
+    assert (tmp_path / "streaming_reps_0.npy").is_file()
+    assert (tmp_path / "streaming_reps_1.npy").is_file()
+    assert isinstance(reps, list)
+    assert len(reps) == 2
+    assert reps[0].shape[0] == 8
+    assert reps[0].shape[2] == 32
+    assert reps[1].shape[0] == 8
+    assert reps[1].shape[2] == 16
     assert len(metadata) == 8
 
 
@@ -166,9 +216,14 @@ def test_extract_representations_variable_length_batches_expands_memmap(tmp_path
         show_progress=False,
     )
 
-    expected_max_t = model(torch.randn(1, 1, 640)).shape[1]
-    assert reps.shape == (4, expected_max_t, 16)
+    expected_max_t_0 = model(torch.randn(1, 1, 640))[0].shape[2]
+    expected_max_t_1 = model(torch.randn(1, 1, 640))[1].shape[2]
+    assert isinstance(reps, list)
+    assert len(reps) == 2
+    assert reps[0].shape == (4, expected_max_t_0, 32)
+    assert reps[1].shape == (4, expected_max_t_1, 16)
+    assert all("rep_lengths" in m for m in metadata)
     assert all("rep_length" in m for m in metadata)
-    assert metadata[0]["rep_length"] < metadata[1]["rep_length"]
-    assert metadata[2]["rep_length"] < metadata[3]["rep_length"]
-    assert metadata[3]["rep_length"] == expected_max_t
+    assert metadata[0]["rep_lengths"][1] < metadata[1]["rep_lengths"][1]
+    assert metadata[2]["rep_lengths"][1] < metadata[3]["rep_lengths"][1]
+    assert metadata[3]["rep_lengths"][1] == expected_max_t_1

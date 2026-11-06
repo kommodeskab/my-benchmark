@@ -26,7 +26,7 @@ class SimpleAudioModel(nn.Module):
         self.conv = nn.Conv1d(1, 8, kernel_size=3, padding=1)
 
     def forward(self, x):
-        return self.conv(x).transpose(1, 2)
+        return [self.conv(x)]
 
 
 def test_resolve_device():

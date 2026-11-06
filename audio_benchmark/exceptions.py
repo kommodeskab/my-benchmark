@@ -14,7 +14,7 @@ class InvalidModelError(BenchmarkError):
 
 
 class InvalidModelOutputError(BenchmarkError):
-    """Raised when a representation model output shape does not match (B, T', C')."""
+    """Raised when a representation model output shape does not match (B, C', T')."""
 
 
 class TaskError(BenchmarkError):

@@ -279,7 +279,7 @@ def test_end_to_end_benchmark_frame_classification_sequence_and_tensor(
         model_name="dummy_clf_seq",
         batch_size=2,
         device="cpu",
-    )
+    )[0]
     assert res_seq.task_name == "frame_classification"
     assert "accuracy" in res_seq.metrics
     assert 0.0 <= res_seq.metrics["accuracy"] <= 1.0
@@ -298,7 +298,7 @@ def test_end_to_end_benchmark_frame_classification_sequence_and_tensor(
         model_name="dummy_clf_tensor",
         batch_size=2,
         device="cpu",
-    )
+    )[0]
     assert res_tensor.task_name == "frame_classification"
     assert "accuracy" in res_tensor.metrics
     assert 0.0 <= res_tensor.metrics["accuracy"] <= 1.0
@@ -341,7 +341,7 @@ def test_end_to_end_benchmark_frame_regression_sequence_and_tensor(tmp_path):
         model_name="dummy_reg_seq",
         batch_size=2,
         device="cpu",
-    )
+    )[0]
     assert res_seq.task_name == "frame_regression"
     assert "mse" in res_seq.metrics
     assert "r2" in res_seq.metrics
@@ -360,7 +360,7 @@ def test_end_to_end_benchmark_frame_regression_sequence_and_tensor(tmp_path):
         model_name="dummy_reg_tensor",
         batch_size=2,
         device="cpu",
-    )
+    )[0]
     assert res_tensor.task_name == "frame_regression"
     assert "mse" in res_tensor.metrics
     assert "r2" in res_tensor.metrics

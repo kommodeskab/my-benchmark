@@ -85,6 +85,8 @@ class SpeechCommandsDataset(Dataset):
             if data_dir is not None
             else (os.getenv("DATA_PATH") or "./data")
         )
+        if resolved_root == "./data":
+            os.makedirs(resolved_root, exist_ok=True)
         self.data_dir = resolved_root
         self.download = download
 
